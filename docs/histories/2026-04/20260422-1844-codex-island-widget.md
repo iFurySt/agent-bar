@@ -32,6 +32,9 @@
 - **Aligned per-screen menu bar height**: Derived island height separately for each `NSScreen` from the visible top inset, safe area, and notch height so mixed-resolution displays align with their own menu bars.
 - **Prevented full-line clipping**: Added label width safety on attached external-screen islands so token counts such as `71M` do not render with a middle ellipsis.
 - **Renamed product**: Renamed the local package, executable, targets, source folders, and docs to `agent-bar`/`AgentBar` while keeping Codex provider names for the data source.
+- **Reduced quota startup latency**: Changed the fallback quota scanner to read JSONL session files from the tail and stop once a base `codex` quota is found in a file, avoiding long `--%` startup states when recent sessions are large.
+- **Added persistent incremental caching**: Added `~/.agentbar/cache.json` for the last full snapshot plus per-session file summaries keyed by path/size/mtime, so startup can show cached values and refreshes only recompute changed files.
+- **Improved live refresh affordance and color**: Added a small green pulsing status dot while recomputing and styled quota percentages with green/orange/red remaining-capacity thresholds, with subtler supporting text and token accents on full external-display rows.
 - **Added tests**: Covered line formatting and basic Codex session token/cost parsing.
 - **Synced docs**: Replaced template README/architecture/UI/reliability/security/quality text with the current project behavior.
 

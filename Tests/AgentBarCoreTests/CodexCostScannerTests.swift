@@ -20,7 +20,10 @@ final class CodexCostScannerTests: XCTestCase {
 
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!
-        let scanner = CodexCostScanner(sessionsRoot: root, calendar: calendar)
+        let scanner = CodexCostScanner(
+            sessionsRoot: root,
+            calendar: calendar,
+            cacheStore: AgentBarCacheStore(fileURL: root.appendingPathComponent("cache.json")))
         let now = CodexCostScanner.parseTimestamp("2026-04-22T12:00:00.000Z")!
 
         let snapshot = scanner.scan(now: now)
@@ -28,5 +31,33 @@ final class CodexCostScannerTests: XCTestCase {
         XCTAssertEqual(snapshot.todayTokens, 1_950)
         XCTAssertEqual(snapshot.last30DaysTokens, 1_950)
         XCTAssertEqual(snapshot.todayCostUSD, 0.005625, accuracy: 0.000001)
+    }
+
+    func testUpdatesCachedCostWhenFileChanges() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let dayDir = root
+            .appendingPathComponent("2026", isDirectory: true)
+            .appendingPathComponent("04", isDirectory: true)
+            .appendingPathComponent("22", isDirectory: true)
+        try FileManager.default.createDirectory(at: dayDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let file = dayDir.appendingPathComponent("rollout.jsonl")
+        let original = #"{"timestamp":"2026-04-22T10:00:01.000Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":1000,"cached_input_tokens":0,"output_tokens":100}}}}"#
+        try original.write(to: file, atomically: true, encoding: .utf8)
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let cacheStore = AgentBarCacheStore(fileURL: root.appendingPathComponent("cache.json"))
+        let scanner = CodexCostScanner(sessionsRoot: root, calendar: calendar, cacheStore: cacheStore)
+        let now = CodexCostScanner.parseTimestamp("2026-04-22T12:00:00.000Z")!
+
+        XCTAssertEqual(scanner.scan(now: now).todayTokens, 1_100)
+
+        let modified = #"{"timestamp":"2026-04-22T10:00:01.000Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":2000,"cached_input_tokens":0,"output_tokens":200}}}}"#
+        try modified.write(to: file, atomically: true, encoding: .utf8)
+
+        XCTAssertEqual(scanner.scan(now: now).todayTokens, 2_200)
     }
 }

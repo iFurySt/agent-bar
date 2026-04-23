@@ -15,6 +15,6 @@
 | --- | --- | --- | --- |
 | 产品面 | B | 已有最小可用顶部浮窗，范围清楚，只展示 Codex quota 与 token/cost。 | 真实使用后再决定是否需要打包成 `.app`。 |
 | 架构文档 | B | 已替换为 SwiftPM/AppKit/Core 的真实结构。 | 后续如果加入打包或登录流程，同步更新边界。 |
-| 测试 | C | 覆盖了显示格式和本地 token 扫描 smoke path。 | 补 API response fixture 与 fallback scanner 测试。 |
-| 可观测性 | C | 行为可通过 UI 和测试验证，但还没有显式日志。 | 如果出现 quota 读取问题，再补本地 debug 输出。 |
+| 测试 | C | 覆盖了显示格式、本地 token 扫描、缓存失效和 fallback scanner smoke path。 | 补 API response fixture 与更完整的缓存复用测试。 |
+| 可观测性 | B | UI 有刷新中的呼吸点，缓存可从 `~/.agentbar/cache.json` 直接检查。 | 如果出现 quota 读取问题，再补本地 debug 输出。 |
 | 安全 | B | 本地只读 session，网络面限定到 Codex usage API。 | 打包前评估 token 刷新写回策略是否需要用户开关。 |

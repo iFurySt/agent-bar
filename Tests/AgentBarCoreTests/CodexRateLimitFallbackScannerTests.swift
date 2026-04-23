@@ -15,7 +15,8 @@ final class CodexRateLimitFallbackScannerTests: XCTestCase {
         ].joined(separator: "\n")
         try lines.write(to: file, atomically: true, encoding: .utf8)
 
-        let snapshot = CodexRateLimitFallbackScanner(sessionsRoot: root).latestRateLimits()
+        let cacheStore = AgentBarCacheStore(fileURL: root.appendingPathComponent("cache.json"))
+        let snapshot = CodexRateLimitFallbackScanner(sessionsRoot: root, cacheStore: cacheStore).latestRateLimits()
 
         XCTAssertEqual(snapshot.fiveHourRemainingPercent, 63)
         XCTAssertEqual(snapshot.weeklyRemainingPercent, 57)

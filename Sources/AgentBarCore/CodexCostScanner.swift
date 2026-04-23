@@ -1,6 +1,6 @@
 import Foundation
 
-public struct CodexCostSnapshot: Equatable, Sendable {
+public struct CodexCostSnapshot: Codable, Equatable, Sendable {
     public let todayCostUSD: Double
     public let todayTokens: Int
     public let last30DaysCostUSD: Double
@@ -17,13 +17,16 @@ public struct CodexCostSnapshot: Equatable, Sendable {
 public final class CodexCostScanner: @unchecked Sendable {
     private let sessionsRoot: URL
     private let calendar: Calendar
+    private let cacheStore: AgentBarCacheStore?
 
     public init(
         sessionsRoot: URL = CodexHome.url().appendingPathComponent("sessions", isDirectory: true),
-        calendar: Calendar = .current)
+        calendar: Calendar = .current,
+        cacheStore: AgentBarCacheStore? = .default)
     {
         self.sessionsRoot = sessionsRoot
         self.calendar = calendar
+        self.cacheStore = cacheStore
     }
 
     public func scan(now: Date = Date()) -> CodexCostSnapshot {
@@ -31,10 +34,22 @@ public final class CodexCostScanner: @unchecked Sendable {
         let since = calendar.date(byAdding: .day, value: -29, to: calendar.startOfDay(for: now)) ?? now
         let sinceKey = Self.dayKey(for: since, calendar: calendar)
         let files = sessionFiles(since: since, through: now)
+        let currentPaths = Set(files.map(\.path))
+        let cache = cacheStore?.load() ?? .empty
+        var updatedFiles: [String: CachedCostFile] = [:]
 
         var days: [String: TokenTotals] = [:]
         for file in files {
-            let fileDays = parseFile(file)
+            guard let metadata = CachedFileMetadata(fileURL: file) else { continue }
+            let fileDays: [String: [String: TokenTotals]]
+            if let cached = cache.costFiles[file.path], cached.metadata == metadata {
+                fileDays = cached.days
+                updatedFiles[file.path] = cached
+            } else {
+                fileDays = parseFile(file)
+                updatedFiles[file.path] = CachedCostFile(metadata: metadata, days: fileDays)
+            }
+
             for (day, models) in fileDays where day >= sinceKey && day <= todayKey {
                 for (model, totals) in models {
                     days[day, default: .zero].add(totals: totals, model: model)
@@ -48,11 +63,20 @@ public final class CodexCostScanner: @unchecked Sendable {
             last30.add(totals)
         }
 
-        return CodexCostSnapshot(
+        let snapshot = CodexCostSnapshot(
             todayCostUSD: today.costUSD,
             todayTokens: today.totalTokens,
             last30DaysCostUSD: last30.costUSD,
             last30DaysTokens: last30.totalTokens)
+
+        cacheStore?.update { cache in
+            cache.costFiles = cache.costFiles.filter { currentPaths.contains($0.key) }
+            for (path, file) in updatedFiles {
+                cache.costFiles[path] = file
+            }
+        }
+
+        return snapshot
     }
 
     private func sessionFiles(since: Date, through now: Date) -> [URL] {
@@ -195,13 +219,13 @@ private struct RawTokenTotals {
     }
 }
 
-private struct TokenTotals {
+struct TokenTotals: Codable, Equatable, Sendable {
     var totalTokens: Int
     var costUSD: Double
 
     static let zero = TokenTotals(totalTokens: 0, costUSD: 0)
 
-    mutating func add(raw: RawTokenTotals, model: String) {
+    fileprivate mutating func add(raw: RawTokenTotals, model: String) {
         totalTokens += raw.input + raw.output
         costUSD += CodexPricing.codexCostUSD(
             model: model,

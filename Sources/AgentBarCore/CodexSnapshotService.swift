@@ -20,15 +20,22 @@ public final class CodexSnapshotService: @unchecked Sendable {
     private let usageClient: CodexUsageClient
     private let costScanner: CodexCostScanner
     private let fallbackScanner: CodexRateLimitFallbackScanner
+    private let cacheStore: AgentBarCacheStore
 
     public init(
         usageClient: CodexUsageClient = CodexUsageClient(),
-        costScanner: CodexCostScanner = CodexCostScanner(),
-        fallbackScanner: CodexRateLimitFallbackScanner = CodexRateLimitFallbackScanner())
+        costScanner: CodexCostScanner? = nil,
+        fallbackScanner: CodexRateLimitFallbackScanner? = nil,
+        cacheStore: AgentBarCacheStore = .default)
     {
         self.usageClient = usageClient
-        self.costScanner = costScanner
-        self.fallbackScanner = fallbackScanner
+        self.costScanner = costScanner ?? CodexCostScanner(cacheStore: cacheStore)
+        self.fallbackScanner = fallbackScanner ?? CodexRateLimitFallbackScanner(cacheStore: cacheStore)
+        self.cacheStore = cacheStore
+    }
+
+    public func cachedSnapshot() -> AgentBarSnapshot? {
+        cacheStore.load().latestSnapshot?.snapshot
     }
 
     public func snapshot() async -> AgentBarSnapshot {
@@ -38,10 +45,12 @@ public final class CodexSnapshotService: @unchecked Sendable {
         }
 
         let resolvedRateLimits = await resolveRateLimits()
-        return await AgentBarSnapshot(
+        let snapshot = await AgentBarSnapshot(
             rateLimits: resolvedRateLimits.snapshot,
             costs: costTask.value,
             isUsingRateLimitFallback: resolvedRateLimits.isUsingFallback)
+        cacheStore.save(snapshot: snapshot)
+        return snapshot
     }
 
     public func quickRateLimits() async -> CodexRateLimitSnapshot {
@@ -73,44 +82,84 @@ public final class CodexSnapshotService: @unchecked Sendable {
 
 public final class CodexRateLimitFallbackScanner: @unchecked Sendable {
     private let sessionsRoot: URL
+    private let cacheStore: AgentBarCacheStore?
 
-    public init(sessionsRoot: URL = CodexHome.url().appendingPathComponent("sessions", isDirectory: true)) {
+    public init(
+        sessionsRoot: URL = CodexHome.url().appendingPathComponent("sessions", isDirectory: true),
+        cacheStore: AgentBarCacheStore? = .default)
+    {
         self.sessionsRoot = sessionsRoot
+        self.cacheStore = cacheStore
     }
 
     public func latestRateLimits() -> CodexRateLimitSnapshot {
         let files = recentFiles()
+        let currentPaths = Set(files.map(\.path))
+        let cache = cacheStore?.load() ?? .empty
+        var updatedFiles: [String: CachedRateLimitFile] = [:]
         var best: RateLimitCandidate?
 
         for file in files {
+            guard let metadata = CachedFileMetadata(fileURL: file) else { continue }
+            if let cached = cache.rateLimitFiles[file.path], cached.metadata == metadata {
+                updatedFiles[file.path] = cached
+                if let candidate = cached.candidate?.rateLimitCandidate,
+                   Self.shouldReplace(best: best, with: candidate)
+                {
+                    best = candidate
+                }
+                continue
+            }
+
+            var fileBest: RateLimitCandidate?
             JSONLLineScannerForRates.scan(fileURL: file) { data in
                 guard data.containsAscii(#""token_count""#),
                       let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                       obj["type"] as? String == "event_msg",
                       let timestamp = obj["timestamp"] as? String
-                else { return }
+                else { return true }
 
                 let payload = obj["payload"] as? [String: Any]
                 guard payload?["type"] as? String == "token_count",
                       let rateLimits = payload?["rate_limits"] as? [String: Any]
-                else { return }
+                else { return true }
 
                 let candidate = RateLimitCandidate(
                     timestamp: timestamp,
                     isBaseCodexLimit: Self.isBaseCodexLimit(rateLimits["limit_id"]),
                     primary: Self.remainingPercent(rateLimits["primary"]),
                     secondary: Self.remainingPercent(rateLimits["secondary"]))
-                guard candidate.primary != nil || candidate.secondary != nil else { return }
+                guard candidate.primary != nil || candidate.secondary != nil else { return true }
 
+                if Self.shouldReplace(best: fileBest, with: candidate) {
+                    fileBest = candidate
+                }
                 if Self.shouldReplace(best: best, with: candidate) {
                     best = candidate
                 }
+
+                // The scanner walks newest lines first; once the base Codex quota
+                // is found in this file, older lines in the same file cannot beat it.
+                return !candidate.isBaseCodexLimit
+            }
+
+            updatedFiles[file.path] = CachedRateLimitFile(
+                metadata: metadata,
+                candidate: fileBest.map(CachedRateLimitCandidate.init))
+        }
+
+        let snapshot = CodexRateLimitSnapshot(
+            fiveHourRemainingPercent: best?.primary,
+            weeklyRemainingPercent: best?.secondary)
+
+        cacheStore?.update { cache in
+            cache.rateLimitFiles = cache.rateLimitFiles.filter { currentPaths.contains($0.key) }
+            for (path, file) in updatedFiles {
+                cache.rateLimitFiles[path] = file
             }
         }
 
-        return CodexRateLimitSnapshot(
-            fiveHourRemainingPercent: best?.primary,
-            weeklyRemainingPercent: best?.secondary)
+        return snapshot
     }
 
     private func recentFiles() -> [URL] {
@@ -162,29 +211,58 @@ private struct RateLimitCandidate {
     let secondary: Int?
 }
 
+private extension CachedRateLimitCandidate {
+    init(_ candidate: RateLimitCandidate) {
+        self.init(
+            timestamp: candidate.timestamp,
+            isBaseCodexLimit: candidate.isBaseCodexLimit,
+            primary: candidate.primary,
+            secondary: candidate.secondary)
+    }
+
+    var rateLimitCandidate: RateLimitCandidate {
+        RateLimitCandidate(
+            timestamp: timestamp,
+            isBaseCodexLimit: isBaseCodexLimit,
+            primary: primary,
+            secondary: secondary)
+    }
+}
+
 private enum JSONLLineScannerForRates {
-    static func scan(fileURL: URL, onLine: (Data) -> Void) {
+    static func scan(fileURL: URL, onLine: (Data) -> Bool) {
         guard let handle = try? FileHandle(forReadingFrom: fileURL) else { return }
         defer { try? handle.close() }
 
         let newline = Data([0x0A])
-        var buffer = Data()
-        while true {
-            let chunk = (try? handle.read(upToCount: 64 * 1024)) ?? Data()
-            if chunk.isEmpty { break }
-            buffer.append(chunk)
+        let chunkSize = 64 * 1024
+        let fileSize = (try? handle.seekToEnd()) ?? 0
+        var offset = fileSize
+        var remainder = Data()
 
-            while let range = buffer.range(of: newline) {
-                let line = buffer.subdata(in: 0..<range.lowerBound)
-                buffer.removeSubrange(0..<range.upperBound)
-                if !line.isEmpty {
-                    onLine(line)
+        while offset > 0 {
+            let readSize = min(chunkSize, Int(offset))
+            offset -= UInt64(readSize)
+            guard (try? handle.seek(toOffset: offset)) != nil,
+                  var chunk = try? handle.read(upToCount: readSize),
+                  !chunk.isEmpty
+            else { break }
+
+            chunk.append(remainder)
+            var searchEnd = chunk.endIndex
+            while let range = chunk.range(of: newline, options: .backwards, in: chunk.startIndex..<searchEnd) {
+                let line = chunk.subdata(in: range.upperBound..<searchEnd)
+                searchEnd = range.lowerBound
+                if !line.isEmpty, !onLine(line) {
+                    return
                 }
             }
+
+            remainder = chunk.subdata(in: chunk.startIndex..<searchEnd)
         }
 
-        if !buffer.isEmpty {
-            onLine(buffer)
+        if !remainder.isEmpty {
+            _ = onLine(remainder)
         }
     }
 }

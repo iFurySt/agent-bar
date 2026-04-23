@@ -1,6 +1,6 @@
 import Foundation
 
-public struct CodexRateLimitSnapshot: Equatable, Sendable {
+public struct CodexRateLimitSnapshot: Codable, Equatable, Sendable {
     public let fiveHourRemainingPercent: Int?
     public let weeklyRemainingPercent: Int?
 
