@@ -1,28 +1,33 @@
-# harness-template-cn
+# agent-bar
 
-English version: [`harness-template`](https://github.com/iFurySt/harness-template)
+一个超轻量 macOS 顶部浮窗，用一行信息显示 Codex 剩余额度和本地 token/cost 消耗。
 
-## 简介
+```text
+[CODEX] 5h 47%   7d 79%      Today: $119.63 · 307M / ~30 Days: $1,448.86 · 3.4B Tokens
+```
 
-一个面向 Agent 协作开发的基础仓库模板，可以用来启动任何你想做的产品或服务。
+## 功能
 
-## 快速开始
+- 显示 Codex 5h 和 7d 窗口的剩余百分比。
+- 扫描本机 `~/.codex/sessions`，显示当天 token/cost 与约 30 天 token/cost。
+- 所有屏幕都使用贴住顶部、水平居中的黑色 attached island，并按各自屏幕的菜单栏高度绘制。外接屏显示完整信息且中间不留空区；刘海屏按物理 notch 几何绘制等高 compact island，把 notch 中心作为禁区，只显示 Codex icon 和两个剩余百分比。黑底参考 X Island 的 macOS notch path，顶边贴屏成直线，上侧小半径收肩，底部使用更大圆角，不使用 iPhone 式胶囊圆角。
+- 只使用 SwiftPM、Foundation 和 AppKit，不引入 CodexBar 的多 provider、设置页、Sparkle 或打包框架。
+- 优先从最近 Codex session 的 `token_count.rate_limits` 读取 quota，基础 `codex` 窗口缺失时再用 Codex usage API 补齐。
 
-可以在这个仓库右上角直接使用 GitHub 的模板流程：
-
-1. 选择 **Use this template**。
-2. 选择 [**Create a new repository**](https://github.com/new?template_name=harness-template-cn&template_owner=iFurySt)。
-
-也可以在新仓库或已有仓库里用 `harness-cli` 初始化：
+## 运行
 
 ```sh
-harness-cli init --language zh
+swift run AgentBar
+```
+
+应用默认读取 `CODEX_HOME`，没有设置时读取 `~/.codex`。
+
+## 验证
+
+```sh
+swift test
 ```
 
 ## 许可证
 
 [MIT](LICENSE)
-
-## 备注
-
-这套方法主要来自我们自己的持续实践和整理，同时也吸收了 OpenAI 在 [harness engineering 文章](https://openai.com/index/harness-engineering/) 中的一部分思路，最后汇总成了这个模板。

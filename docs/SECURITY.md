@@ -1,13 +1,15 @@
 # 安全默认约束
 
-这份文档用于把安全默认值讲清楚，避免实现逐步演进时越走越散。
+`agent-bar` 只读取本机 Codex 凭据和 session 日志，不采集、不上传、不持久化额外遥测。
 
-建议维护的内容：
+## 本地数据
 
-- 认证与授权约束。
-- 密钥和环境变量管理方式。
-- 依赖治理与供应链安全要求。
-- 数据分级、脱敏与保留策略。
-- 对外 API、Webhook、文件上传和沙箱执行的规则。
+- 默认读取 `~/.codex/auth.json`，如果设置了 `CODEX_HOME` 则读取对应目录。
+- 默认读取 `~/.codex/sessions` 下最近约 30 天 JSONL session 文件。
+- session 内容只在本机进程内解析 token 计数、模型名和 rate limit 字段，不展示 prompt、回复或工具输出。
 
-仓库级的依赖、SBOM 和 provenance 默认能力，统一写在 `docs/SUPPLY_CHAIN_SECURITY.md`。
+## 网络
+
+- 仅为获取实时 5h/7d quota 调用 `https://chatgpt.com/backend-api/wham/usage`。
+- access token 过期时，会按 CodexBar 参考实现刷新 OAuth token 并写回 `auth.json`，避免 refresh token 轮换后丢失。
+- usage API 失败时使用本地 session fallback，不要求持续联网。

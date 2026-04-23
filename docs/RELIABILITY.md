@@ -1,13 +1,19 @@
 # 稳定性与可运维性
 
-这里用来定义项目的运行质量底线。
+`agent-bar` 的稳定性目标是本机轻量、失败可降级、UI 不阻塞。
 
-建议维护的内容包括：
+## 默认行为
 
-- 启动、健康检查和基本可用性要求。
-- 日志、指标、链路的采集和访问约定。
-- timeout、retry、backoff 的默认策略。
-- 本地和 CI 的关键路径验证方式。
-- 常见故障、排查路径和恢复步骤。
+- 顶部浮窗每 60 秒刷新一次。
+- Codex usage API 读取失败时，使用最近 session 中的 rate limit 事件兜底。
+- 本地 cost 扫描只读最近约 30 天 `~/.codex/sessions/YYYY/MM/DD/*.jsonl`。
+- cost/token 扫描在后台任务中运行，避免阻塞 AppKit 主线程。
 
-CI/CD 流程结构和 release 自动化的默认方案，统一写在 `docs/CICD.md`。
+## 验证
+
+```sh
+swift test
+swift run AgentBar
+```
+
+如果 5h/7d 显示 `--%`，优先检查 `codex` 是否已登录，以及最近 session 里是否存在 `token_count.rate_limits`。
