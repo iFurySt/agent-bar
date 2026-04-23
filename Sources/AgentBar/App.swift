@@ -498,7 +498,7 @@ final class IslandView: NSView {
     }
 
     private static func codexIcon() -> NSImage? {
-        guard let url = Bundle.module.url(forResource: "ProviderIcon-codex", withExtension: "svg"),
+        guard let url = resourceURL(for: "ProviderIcon-codex", withExtension: "svg"),
               let image = NSImage(contentsOf: url)
         else {
             return nil
@@ -506,6 +506,17 @@ final class IslandView: NSView {
         image.isTemplate = true
         image.size = iconViewSize
         return image
+    }
+
+    private static func resourceURL(for name: String, withExtension fileExtension: String) -> URL? {
+        if let resourceURL = Bundle.main.resourceURL,
+           let packagedBundle = Bundle(url: resourceURL.appendingPathComponent("agent-bar_AgentBar.bundle")),
+           let url = packagedBundle.url(forResource: name, withExtension: fileExtension)
+        {
+            return url
+        }
+
+        return Bundle.module.url(forResource: name, withExtension: fileExtension)
     }
 
     private var iconViewSize: NSSize {

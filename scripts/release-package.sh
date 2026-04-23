@@ -3,23 +3,31 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-dist_dir="${repo_root}/dist"
+release_dir="${repo_root}/dist/release/agent-bar"
+version="${AGENT_BAR_RELEASE_VERSION:-}"
 
-rm -rf "${dist_dir}"
-mkdir -p "${dist_dir}"
+if [[ -z "${version}" ]]; then
+  if tag="$(git -C "${repo_root}" describe --tags --exact-match 2>/dev/null)"; then
+    version="${tag#v}"
+  else
+    version="0.0.0-dev"
+  fi
+fi
 
-cat > "${dist_dir}/release-manifest.json" <<EOF
+"${repo_root}/scripts/build-agent-bar-dmg.sh" \
+  --configuration release \
+  --arch "${AGENT_BAR_RELEASE_ARCH:-universal}" \
+  --version "${version}" \
+  --output-dir "${release_dir}"
+
+cat > "${release_dir}/release-manifest.json" <<EOF
 {
   "repository": "${GITHUB_REPOSITORY:-local}",
   "git_sha": "${GITHUB_SHA:-$(git -C "${repo_root}" rev-parse HEAD 2>/dev/null || echo unknown)}",
   "generated_at_utc": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
-  "artifact": "repo-metadata.tgz",
-  "note": "Replace scripts/release-package.sh with the real project build packaging when the stack is known."
+  "version": "${version}",
+  "artifact": "AgentBar-${version}.dmg"
 }
 EOF
 
-tar -czf "${dist_dir}/repo-metadata.tgz" \
-  -C "${repo_root}" \
-  AGENTS.md README.md CONTRIBUTING.md LICENSE docs scripts .github Makefile
-
-echo "${dist_dir}/repo-metadata.tgz"
+echo "${release_dir}/AgentBar-${version}.dmg"

@@ -7,6 +7,7 @@
 - `Sources/AgentBar/`：AppKit 入口，创建无 Dock 图标的顶部浮窗；刘海屏使用 notch-aware island 布局。
 - `Sources/AgentBarCore/`：数据读取、token/cost 扫描、价格计算和显示格式化。
 - `Tests/AgentBarCoreTests/`：核心格式化和本地 session 扫描的 smoke coverage。
+- `scripts/build-agent-bar-dmg.sh`：把 SwiftPM executable 打成 `AgentBar.app`，支持 universal DMG、Developer ID 签名和 release notarization。
 - `docs/`：仓库内知识、协作规则和变更 history。
 
 ## 数据流
@@ -20,5 +21,6 @@
 ## 边界
 
 - 不支持多 provider。
-- 不提供设置页、菜单栏状态项、登录流程、更新框架或打包发布逻辑。
+- 不提供设置页、菜单栏状态项、登录流程或更新框架。
+- 打包发布只覆盖 macOS DMG；当前不提供 Homebrew、Sparkle auto-update 或 App Store 分发。
 - 不上传本地 session 内容；所有 cost/token 汇总都在本机完成。

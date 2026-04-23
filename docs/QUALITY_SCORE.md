@@ -13,8 +13,8 @@
 
 | 区域 | 评分 | 原因 | 下一步 |
 | --- | --- | --- | --- |
-| 产品面 | B | 已有最小可用顶部浮窗，范围清楚，只展示 Codex quota 与 token/cost。 | 真实使用后再决定是否需要打包成 `.app`。 |
-| 架构文档 | B | 已替换为 SwiftPM/AppKit/Core 的真实结构。 | 后续如果加入打包或登录流程，同步更新边界。 |
-| 测试 | C | 覆盖了显示格式、本地 token 扫描、缓存失效和 fallback scanner smoke path。 | 补 API response fixture 与更完整的缓存复用测试。 |
+| 产品面 | B | 已有最小可用顶部浮窗，范围清楚，只展示 Codex quota 与 token/cost，并具备 tag 驱动 DMG 分发。 | 真实使用后再决定是否需要设置页、菜单栏状态项或 auto-update。 |
+| 架构文档 | B | 已替换为 SwiftPM/AppKit/Core 的真实结构，并补齐 macOS DMG 打包边界。 | 后续如果加入登录流程或更新框架，同步更新边界。 |
+| 测试 | B | 覆盖了显示格式、本地 token 扫描、缓存失效和 fallback scanner smoke path；CI 已运行 `swift test`。 | 补 API response fixture 与更完整的缓存复用测试。 |
 | 可观测性 | B | UI 有刷新中的呼吸点，缓存可从 `~/.agentbar/cache.json` 直接检查。 | 如果出现 quota 读取问题，再补本地 debug 输出。 |
 | 安全 | B | 本地只读 session，网络面限定到 Codex usage API。 | 打包前评估 token 刷新写回策略是否需要用户开关。 |

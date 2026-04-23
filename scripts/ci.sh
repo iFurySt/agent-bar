@@ -12,4 +12,6 @@ while IFS= read -r file; do
   bash -n "$file"
 done < <(find "${repo_root}/scripts" -type f -name '*.sh' | sort)
 
+swift test --scratch-path "${repo_root}/.build/ci"
+
 echo "基础 CI 检查通过"
