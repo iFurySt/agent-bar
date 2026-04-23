@@ -4,7 +4,7 @@
 
 ## 当前 release 入口
 
-- `ci.yml`：仓库级检查，覆盖 docs、repo hygiene、GitHub Action pinning、shell 脚本校验和 `swift test`。
+- `ci.yml`：仓库级检查，覆盖 docs、repo hygiene、GitHub Action pinning、shell 脚本校验和 `swift test`，支持 push、PR 和手动触发。CI 运行在 Ubuntu 上，只声明并测试跨平台的 `AgentBarCore`；macOS AppKit executable 只在 macOS 主机和 release 打包链路里声明。
 - `supply-chain-security.yml`：在 PR 上做依赖变更检查，并在 PR、定时任务和手动触发时运行 OSV 扫描。
 - `scripts/build-agent-bar-dmg.sh`：构建 `AgentBar.app`，封装 `dist/release/agent-bar/AgentBar-<version>.dmg`，支持 `native` / `arm64` / `x86_64` / `universal`。
 - `scripts/release-package.sh`：release 的统一本地入口，默认构建 universal DMG 并写出 `dist/release/agent-bar/release-manifest.json`。
