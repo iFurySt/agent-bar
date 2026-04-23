@@ -211,6 +211,8 @@ app_name="AgentBar.app"
 executable_name="AgentBar"
 bundle_identifier="com.ifuryst.agentbar"
 bundle_version="${AGENT_BAR_BUNDLE_VERSION:-${GITHUB_RUN_NUMBER:-$(git -C "${repo_root}" rev-list --count HEAD 2>/dev/null || echo 1)}}"
+app_icon_name="AgentBar.icns"
+app_icon_source="${repo_root}/Sources/AgentBar/Resources/${app_icon_name}"
 app_root="${output_dir}/${app_name}"
 contents_dir="${app_root}/Contents"
 macos_dir="${contents_dir}/MacOS"
@@ -257,7 +259,13 @@ if [[ ! -d "${resource_source_dir}" ]]; then
   exit 1
 fi
 
+if [[ ! -f "${app_icon_source}" ]]; then
+  echo "Missing app icon: ${app_icon_source}" >&2
+  exit 1
+fi
+
 cp -R "${resource_source_dir}" "${resources_dir}/${resource_bundle_name}"
+cp "${app_icon_source}" "${resources_dir}/${app_icon_name}"
 
 cat > "${contents_dir}/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -278,6 +286,8 @@ cat > "${contents_dir}/Info.plist" <<PLIST
   <string>AgentBar</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
+  <key>CFBundleIconFile</key>
+  <string>${app_icon_name}</string>
   <key>CFBundleShortVersionString</key>
   <string>${version}</string>
   <key>CFBundleVersion</key>
