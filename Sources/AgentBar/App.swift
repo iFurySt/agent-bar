@@ -40,7 +40,6 @@ final class IslandWindowController {
         last30DaysCostUSD: 0,
         last30DaysTokens: 0)
     private var currentText = "5h --%   7d --%      Today: $0.00 \u{00B7} -- / ~30 Days: $0.00 \u{00B7} -- Tokens"
-    private var isRefreshing = false
 
     init() {
         if let cachedSnapshot = snapshotService.cachedSnapshot() {
@@ -73,9 +72,6 @@ final class IslandWindowController {
     }
 
     private func refresh() async {
-        isRefreshing = true
-        updateOverlays()
-
         let quickRateLimits = await snapshotService.quickRateLimits()
         currentText = AgentBarDisplayFormatting.line(snapshot: AgentBarSnapshot(rateLimits: quickRateLimits, costs: currentCosts))
         updateOverlays()
@@ -83,7 +79,6 @@ final class IslandWindowController {
         let snapshot = await snapshotService.snapshot()
         currentCosts = snapshot.costs
         currentText = AgentBarDisplayFormatting.line(snapshot: snapshot)
-        isRefreshing = false
         updateOverlays()
     }
 
@@ -97,7 +92,7 @@ final class IslandWindowController {
             overlay.view.onPinToggle = { [weak self] in
                 self?.togglePinned()
             }
-            overlay.view.update(text: currentText, isRefreshing: isRefreshing)
+            overlay.view.update(text: currentText)
             overlay.view.setPinned(preferences.isPinned)
             overlay.isHovered = isMouseHovering(overlay, at: mouseLocation)
             overlay.isCollapsed = shouldCollapse(overlay)
@@ -112,7 +107,7 @@ final class IslandWindowController {
 
     private func updateOverlays() {
         for overlay in overlays {
-            overlay.view.update(text: currentText, isRefreshing: isRefreshing)
+            overlay.view.update(text: currentText)
             overlay.view.setPinned(preferences.isPinned)
             position(overlay, animated: false)
         }
@@ -279,14 +274,12 @@ final class IslandView: NSView {
     private let fullLabel = NSTextField(labelWithString: "")
     private let quotaLabel = NSTextField(labelWithString: "")
     private let usageLabel = NSTextField(labelWithString: "")
-    private let statusDotView = PulsingDotView()
     private let pinButton = PinButton()
     private var horizontalPadding: CGFloat = 0
     private var notchInnerPadding: CGFloat = 0
     private var notchHeight: CGFloat = 24
     private(set) var notchGapWidth: CGFloat = 0
     private(set) var notchLeftLaneWidth: CGFloat = 0
-    private var isRefreshing = false
     private var showsPin = false
     private var isHovering = false
     private var style: Style = .attachedBar(height: 32, showsPin: false)
@@ -313,9 +306,7 @@ final class IslandView: NSView {
         addSubview(fullLabel)
         addSubview(quotaLabel)
         addSubview(usageLabel)
-        addSubview(statusDotView)
         addSubview(pinButton)
-        statusDotView.setRefreshing(false)
         pinButton.target = self
         pinButton.action = #selector(pinButtonPressed)
 
@@ -362,13 +353,11 @@ final class IslandView: NSView {
         nil
     }
 
-    func update(text: String, isRefreshing: Bool) {
+    func update(text: String) {
         let segments = Self.split(text)
-        self.isRefreshing = isRefreshing
         fullLabel.attributedStringValue = Self.styledFullText(text)
         quotaLabel.attributedStringValue = Self.styledPercentText(segments.sessionPercent)
         usageLabel.attributedStringValue = Self.styledPercentText(segments.weeklyPercent)
-        statusDotView.setRefreshing(isRefreshing)
         needsLayout = true
     }
 
@@ -424,8 +413,7 @@ final class IslandView: NSView {
         case let .attachedBar(height, _):
             let iconGap: CGFloat = 8
             let labelSafety: CGFloat = 28
-            let statusWidth = refreshingStatusWidth
-            let fixedWidth = horizontalPadding * 2 + iconViewSize.width + iconGap + statusWidth + pinSlotWidth
+            let fixedWidth = horizontalPadding * 2 + iconViewSize.width + iconGap + pinSlotWidth
             let labelWidth = min(
                 fullLabel.intrinsicContentSize.width + labelSafety,
                 max(0, maxWidth - fixedWidth))
@@ -434,11 +422,10 @@ final class IslandView: NSView {
             let iconWidth = iconViewSize.width
             let iconGap: CGFloat = 8
             let labelSafety: CGFloat = 10
-            let statusWidth = refreshingStatusWidth
             let leftContentWidth = iconWidth + iconGap + ceil(quotaLabel.intrinsicContentSize.width)
             let rightContentWidth = ceil(usageLabel.intrinsicContentSize.width)
             let leftWidth = ceil(horizontalPadding + leftContentWidth + notchInnerPadding)
-            let rightWidth = ceil(notchInnerPadding + rightContentWidth + statusWidth + labelSafety + horizontalPadding)
+            let rightWidth = ceil(notchInnerPadding + rightContentWidth + labelSafety + horizontalPadding)
             notchLeftLaneWidth = leftWidth
             let width = min(maxWidth, leftWidth + notchGapWidth + rightWidth)
             return NSSize(width: width, height: notchHeight)
@@ -454,12 +441,11 @@ final class IslandView: NSView {
         let iconY = floor(centerY - iconViewSize.height / 2)
         let iconGap: CGFloat = 8
         let labelSafety: CGFloat = 28
-        let statusWidth = refreshingStatusWidth
         let pinWidth = pinSlotWidth
         let labelWidth = min(
             fullLabel.intrinsicContentSize.width + labelSafety,
-            max(0, bounds.width - horizontalPadding * 2 - iconViewSize.width - iconGap - statusWidth - pinWidth))
-        let totalWidth = iconViewSize.width + iconGap + labelWidth + statusWidth + pinWidth
+            max(0, bounds.width - horizontalPadding * 2 - iconViewSize.width - iconGap - pinWidth))
+        let totalWidth = iconViewSize.width + iconGap + labelWidth + pinWidth
         let startX = max(horizontalPadding, floor((bounds.width - totalWidth) / 2))
 
         iconView.frame = NSRect(x: startX, y: iconY, width: iconViewSize.width, height: iconViewSize.height)
@@ -468,9 +454,7 @@ final class IslandView: NSView {
             y: labelY,
             width: labelWidth,
             height: textHeight)
-        layoutStatusDot(after: fullLabel.frame.maxX, centerY: centerY)
-        let pinAnchorX = isRefreshing ? statusDotView.frame.maxX : fullLabel.frame.maxX
-        layoutPinButton(after: pinAnchorX, centerY: centerY)
+        layoutPinButton(after: fullLabel.frame.maxX, centerY: centerY)
     }
 
     private func layoutNotch() {
@@ -487,7 +471,6 @@ final class IslandView: NSView {
         let iconWidth = iconViewSize.width
         let iconGap: CGFloat = 8
         let labelSafety: CGFloat = 10
-        let statusWidth = refreshingStatusWidth
         let quotaWidth = ceil(quotaLabel.intrinsicContentSize.width)
         let leftContentWidth = iconWidth + iconGap + quotaWidth
         let leftContentX = max(horizontalPadding, gapStart - notchInnerPadding - leftContentWidth)
@@ -505,22 +488,8 @@ final class IslandView: NSView {
         usageLabel.frame = NSRect(
             x: usageX,
             y: labelY,
-            width: min(usageWidth + labelSafety, max(0, bounds.width - usageX - horizontalPadding - statusWidth)),
+            width: min(usageWidth + labelSafety, max(0, bounds.width - usageX - horizontalPadding)),
             height: textHeight)
-        layoutStatusDot(after: usageLabel.frame.maxX, centerY: centerY)
-    }
-
-    private func layoutStatusDot(after x: CGFloat, centerY: CGFloat) {
-        guard isRefreshing else {
-            statusDotView.frame = .zero
-            return
-        }
-        let size = Self.statusDotSize
-        statusDotView.frame = NSRect(
-            x: x + Self.statusDotGap,
-            y: floor(centerY - size / 2),
-            width: size,
-            height: size)
     }
 
     private func layoutPinButton(after x: CGFloat, centerY: CGFloat) {
@@ -679,10 +648,6 @@ final class IslandView: NSView {
         Self.iconViewSize
     }
 
-    private var refreshingStatusWidth: CGFloat {
-        isRefreshing ? Self.statusDotSize + Self.statusDotGap : 0
-    }
-
     private var pinSlotWidth: CGFloat {
         showsPin ? Self.pinButtonSize.width + Self.pinButtonGap : 0
     }
@@ -691,8 +656,6 @@ final class IslandView: NSView {
     private static let pinButtonSize = NSSize(width: 18, height: 18)
     private static let pinButtonGap: CGFloat = 8
     private static let labelFont = NSFont.monospacedSystemFont(ofSize: 11, weight: .semibold)
-    private static let statusDotSize: CGFloat = 5
-    private static let statusDotGap: CGFloat = 8
 }
 
 final class PinButton: NSButton {
@@ -729,50 +692,6 @@ final class PinButton: NSButton {
             accessibilityDescription: pinned ? "Pinned open" : "Auto hide")
         symbol?.isTemplate = true
         image = symbol?.withSymbolConfiguration(configuration)
-    }
-}
-
-final class PulsingDotView: NSView {
-    private var isRefreshing = false
-
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        wantsLayer = true
-        layer?.backgroundColor = NSColor.systemGreen.cgColor
-        layer?.cornerRadius = frameRect.height / 2
-        layer?.shadowColor = NSColor.systemGreen.cgColor
-        layer?.shadowOpacity = 0.35
-        layer?.shadowRadius = 5
-        layer?.shadowOffset = .zero
-        isHidden = true
-    }
-
-    @available(*, unavailable)
-    required init?(coder _: NSCoder) {
-        nil
-    }
-
-    override func layout() {
-        super.layout()
-        layer?.cornerRadius = min(bounds.width, bounds.height) / 2
-    }
-
-    func setRefreshing(_ refreshing: Bool) {
-        guard refreshing != isRefreshing else { return }
-        isRefreshing = refreshing
-        isHidden = !refreshing
-        if refreshing {
-            let animation = CABasicAnimation(keyPath: "opacity")
-            animation.fromValue = 0.35
-            animation.toValue = 1.0
-            animation.duration = 0.9
-            animation.autoreverses = true
-            animation.repeatCount = .infinity
-            animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            layer?.add(animation, forKey: "agentbar-pulse")
-        } else {
-            layer?.removeAnimation(forKey: "agentbar-pulse")
-        }
     }
 }
 

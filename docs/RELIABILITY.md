@@ -10,7 +10,7 @@
 - 本地 cost 扫描只读最近约 30 天 `~/.codex/sessions/YYYY/MM/DD/*.jsonl`。
 - 每轮刷新按 session 文件 size/mtime 复用缓存，只重算新增或更新过的文件。
 - cost/token 扫描在后台任务中运行，避免阻塞 AppKit 主线程。
-- 后台刷新进行中时，island 上会显示绿色呼吸点；刷新完成后隐藏。
+- 后台刷新保持静默，不显示状态点，避免快速刷新时造成视觉闪烁。
 - 无 notch 普通屏幕用 30Hz 主线程 timer 轮询鼠标位置来做顶部唤出，不依赖额外 Accessibility 权限；窗口平时仍默认透传鼠标事件。
 
 ## 验证
