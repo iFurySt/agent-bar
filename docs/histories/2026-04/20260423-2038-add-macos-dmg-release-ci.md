@@ -10,12 +10,12 @@
 - **[Resource Packaging]**: App 内的 Codex icon 资源加载先查 `Contents/Resources` 下的 SwiftPM resource bundle，再回退到本地 `Bundle.module`，保证打包后的 `.app` 结构可签名。
 - **[Signing Path]**: 打包脚本支持 `AGENT_BAR_CODESIGN_*` 环境变量；release workflow 会在 secrets 存在时导入 Developer ID `.p12`，用 hardened runtime 签名 app。
 - **[Notarization Path]**: release workflow 在 Developer ID 签名和 `APPLE_NOTARY_*` secrets 都存在时提交 DMG notarization 并 staple。
-- **[Tag Release]**: `.github/workflows/release.yml` 改为 push semver tag 触发，发布 DMG、manifest、SBOM，并为 DMG 生成 provenance。
+- **[Tag Release]**: `.github/workflows/release.yml` 改为 push semver tag 触发，发布 DMG，并为 DMG 生成 provenance。
 - **[Docs Sync]**: 更新 CI/CD、架构边界、质量评分和面向用户 release notes。
 
 ### 设计动机
 
-`AgentBar` 已经是明确的单机 macOS AppKit 小组件，继续保留模板式 repo metadata release 会让真实交付路径缺位。把本地脚本和 GitHub Actions 都收敛到同一个 `scripts/release-package.sh` 入口，可以让 tag、DMG 文件名、manifest 和 release 页面稳定对齐；Developer ID 签名和 notarization 则保持可选降级，避免 secrets 缺失时完全阻断打包。
+`AgentBar` 已经是明确的单机 macOS AppKit 小组件，继续保留模板式 repo metadata release 会让真实交付路径缺位。把本地脚本和 GitHub Actions 都收敛到同一个 `scripts/release-package.sh` 入口，可以让 tag 和 DMG 文件名稳定对齐；Developer ID 签名和 notarization 则保持可选降级，避免 secrets 缺失时完全阻断打包。
 
 ### 受影响文件
 

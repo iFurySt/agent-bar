@@ -20,14 +20,4 @@ fi
   --version "${version}" \
   --output-dir "${release_dir}"
 
-cat > "${release_dir}/release-manifest.json" <<EOF
-{
-  "repository": "${GITHUB_REPOSITORY:-local}",
-  "git_sha": "${GITHUB_SHA:-$(git -C "${repo_root}" rev-parse HEAD 2>/dev/null || echo unknown)}",
-  "generated_at_utc": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
-  "version": "${version}",
-  "artifact": "AgentBar-${version}.dmg"
-}
-EOF
-
 echo "${release_dir}/AgentBar-${version}.dmg"

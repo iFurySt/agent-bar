@@ -87,14 +87,6 @@ jobs:
         run: |
           AGENT_BAR_RELEASE_VERSION="${RELEASE_VERSION}" ./scripts/release-package.sh
 
-      - name: Generate SBOM
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610
-        with:
-          path: .
-          format: spdx-json
-          output-file: dist/release/agent-bar/sbom.spdx.json
-          upload-artifact: false
-
       - name: Notarize AgentBar DMG
         env:
           APPLE_NOTARY_API_KEY_P8_BASE64: ${{ secrets.APPLE_NOTARY_API_KEY_P8_BASE64 }}
@@ -131,8 +123,6 @@ jobs:
           name: agent-bar-release-artifacts
           path: |
             dist/release/agent-bar/AgentBar-*.dmg
-            dist/release/agent-bar/release-manifest.json
-            dist/release/agent-bar/sbom.spdx.json
           if-no-files-found: error
 
       - name: Generate build provenance
@@ -145,13 +135,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           dmg_path="dist/release/agent-bar/AgentBar-${RELEASE_VERSION}.dmg"
-          manifest_path="dist/release/agent-bar/release-manifest.json"
-          sbom_path="dist/release/agent-bar/sbom.spdx.json"
 
           if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
-            gh release upload "${RELEASE_TAG}" "${dmg_path}" "${manifest_path}" "${sbom_path}" --clobber
+            gh release upload "${RELEASE_TAG}" "${dmg_path}" --clobber
           else
-            gh release create "${RELEASE_TAG}" "${dmg_path}" "${manifest_path}" "${sbom_path}" \
+            gh release create "${RELEASE_TAG}" "${dmg_path}" \
               --title "${RELEASE_TAG}" \
               --generate-notes
           fi
