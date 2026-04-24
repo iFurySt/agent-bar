@@ -22,6 +22,18 @@ final class AgentBarUpdater: NSObject, SPUUpdaterDelegate {
         }
     }
 
+    var automaticallyChecksForUpdates: Bool {
+        get {
+            updater.automaticallyChecksForUpdates
+        }
+        set {
+            updater.automaticallyChecksForUpdates = newValue
+            if newValue {
+                updater.checkForUpdatesInBackground()
+            }
+        }
+    }
+
     func updaterShouldPromptForPermissionToCheck(forUpdates _: SPUUpdater) -> Bool {
         false
     }

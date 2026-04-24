@@ -11,8 +11,57 @@ enum AgentBarMain {
         let delegate = AppDelegate()
         self.delegate = delegate
         app.delegate = delegate
+        AgentBarAppIcon.install()
         app.setActivationPolicy(.accessory)
         app.run()
+    }
+}
+
+enum AgentBarAppIcon {
+    @MainActor
+    static func install() {
+        guard let image = image() else { return }
+        NSApp.applicationIconImage = image
+        refreshDockTile(with: image)
+    }
+
+    @MainActor
+    static func refreshDockTile() {
+        guard let image = image() else { return }
+        NSApp.applicationIconImage = image
+        refreshDockTile(with: image)
+    }
+
+    @MainActor
+    private static func refreshDockTile(with image: NSImage) {
+        let tileSize = NSApp.dockTile.size
+        let size = tileSize == .zero ? NSSize(width: 128, height: 128) : tileSize
+        let imageView = NSImageView(frame: NSRect(origin: .zero, size: size))
+        imageView.image = image
+        imageView.imageScaling = .scaleProportionallyUpOrDown
+        NSApp.dockTile.contentView = imageView
+        NSApp.dockTile.display()
+    }
+
+    private static func image() -> NSImage? {
+        if let resourceURL = Bundle.main.resourceURL {
+            let appIconURL = resourceURL.appendingPathComponent("AgentBar.icns")
+            if let image = NSImage(contentsOf: appIconURL) {
+                return image
+            }
+
+            if let packagedBundle = Bundle(url: resourceURL.appendingPathComponent("agent-bar_AgentBar.bundle")),
+               let url = packagedBundle.url(forResource: "AgentBar", withExtension: "icns"),
+               let image = NSImage(contentsOf: url)
+            {
+                return image
+            }
+        }
+
+        guard let url = Bundle.module.url(forResource: "AgentBar", withExtension: "icns") else {
+            return nil
+        }
+        return NSImage(contentsOf: url)
     }
 }
 
@@ -24,7 +73,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_: Notification) {
         updater.start()
 
-        let controller = IslandWindowController()
+        let controller = IslandWindowController(updater: updater)
         self.controller = controller
         controller.show()
     }
@@ -35,6 +84,9 @@ final class IslandWindowController {
     private var overlays: [ScreenOverlay] = []
     private let snapshotService = CodexSnapshotService()
     private let preferences = AgentBarPreferences()
+    private let updater: AgentBarUpdater
+    private var settingsWindowController: AgentBarSettingsWindowController?
+    private weak var settingsAnchor: NSView?
     private var refreshTask: Task<Void, Never>?
     private var hoverTimer: Timer?
     private var currentCosts = CodexCostSnapshot(
@@ -44,7 +96,9 @@ final class IslandWindowController {
         last30DaysTokens: 0)
     private var currentText = "5h --%   7d --%      Today: $0.00 \u{00B7} -- / ~30 Days: $0.00 \u{00B7} -- Tokens"
 
-    init() {
+    init(updater: AgentBarUpdater) {
+        self.updater = updater
+
         if let cachedSnapshot = snapshotService.cachedSnapshot() {
             currentCosts = cachedSnapshot.costs
             currentText = AgentBarDisplayFormatting.line(snapshot: cachedSnapshot)
@@ -94,6 +148,9 @@ final class IslandWindowController {
                 autoHideEligible: screen.agentBarSupportsAutoHide)
             overlay.view.onPinToggle = { [weak self] in
                 self?.togglePinned()
+            }
+            overlay.view.onSettingsOpen = { [weak self] anchor in
+                self?.toggleSettings(relativeTo: anchor)
             }
             overlay.view.update(text: currentText, animated: false)
             overlay.view.setPinned(preferences.isPinned)
@@ -204,7 +261,10 @@ final class IslandWindowController {
     }
 
     private func shouldCollapse(_ overlay: ScreenOverlay) -> Bool {
-        overlay.autoHideEligible && !preferences.isPinned && !overlay.isHovered
+        overlay.autoHideEligible &&
+            !preferences.isPinned &&
+            !overlay.isHovered &&
+            !isSettingsOpen(for: overlay)
     }
 
     private func isMouseHovering(_ overlay: ScreenOverlay, at point: NSPoint) -> Bool {
@@ -229,6 +289,32 @@ final class IslandWindowController {
             overlay.view.setPinned(preferences.isPinned)
         }
         updateHoverState(animated: true)
+    }
+
+    private func toggleSettings(relativeTo anchor: NSView) {
+        let controller: AgentBarSettingsWindowController
+        if let existingController = settingsWindowController {
+            controller = existingController
+        } else {
+            let newController = AgentBarSettingsWindowController(updater: updater)
+            newController.onClose = { [weak self] in
+                self?.settingsAnchor = nil
+                NSApp.setActivationPolicy(.accessory)
+                self?.updateHoverState(animated: true)
+            }
+            settingsWindowController = newController
+            controller = newController
+        }
+        settingsAnchor = anchor
+        NSApp.setActivationPolicy(.regular)
+        AgentBarAppIcon.refreshDockTile()
+        controller.showSettings()
+        updateHoverState(animated: true)
+    }
+
+    private func isSettingsOpen(for overlay: ScreenOverlay) -> Bool {
+        guard settingsWindowController?.isShown == true, let settingsAnchor else { return false }
+        return settingsAnchor.isDescendant(of: overlay.view)
     }
 
     private var autoHideAnimationDuration: TimeInterval {
@@ -287,6 +373,7 @@ final class IslandView: NSView {
     private let quotaLabel = RollingTextLabel()
     private let usageLabel = RollingTextLabel()
     private let pinButton = PinButton()
+    private let settingsButton = SettingsButton()
     private var horizontalPadding: CGFloat = 0
     private var notchInnerPadding: CGFloat = 0
     private var notchHeight: CGFloat = 24
@@ -296,6 +383,7 @@ final class IslandView: NSView {
     private var isHovering = false
     private var style: Style = .attachedBar(height: 32, showsPin: false)
     var onPinToggle: (() -> Void)?
+    var onSettingsOpen: ((NSView) -> Void)?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -319,8 +407,11 @@ final class IslandView: NSView {
         addSubview(quotaLabel)
         addSubview(usageLabel)
         addSubview(pinButton)
+        addSubview(settingsButton)
         pinButton.target = self
         pinButton.action = #selector(pinButtonPressed)
+        settingsButton.target = self
+        settingsButton.action = #selector(settingsButtonPressed)
 
         let menu = NSMenu()
         let quitItem = NSMenuItem(title: "Quit AgentBar", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
@@ -402,6 +493,8 @@ final class IslandView: NSView {
             self.showsPin = showsPin
             pinButton.isHidden = !showsPin
             pinButton.alphaValue = showsPin ? 1 : 0
+            settingsButton.isHidden = !showsPin
+            settingsButton.alphaValue = showsPin ? 1 : 0
             layer?.backgroundColor = NSColor.clear.cgColor
             layer?.cornerRadius = 0
             fullLabel.lineBreakMode = .byClipping
@@ -416,6 +509,8 @@ final class IslandView: NSView {
             showsPin = false
             pinButton.isHidden = true
             pinButton.alphaValue = 0
+            settingsButton.isHidden = true
+            settingsButton.alphaValue = 0
             layer?.backgroundColor = NSColor.clear.cgColor
             layer?.cornerRadius = 0
             quotaLabel.lineBreakMode = .byClipping
@@ -480,6 +575,7 @@ final class IslandView: NSView {
     private func layoutNotch() {
         iconView.isHidden = false
         pinButton.frame = .zero
+        settingsButton.frame = .zero
 
         let textHeight = ceil(max(quotaLabel.intrinsicContentSize.height, usageLabel.intrinsicContentSize.height))
         let centerY = bounds.midY
@@ -524,10 +620,19 @@ final class IslandView: NSView {
             y: floor(centerY - size.height / 2),
             width: size.width,
             height: size.height)
+        settingsButton.frame = NSRect(
+            x: pinButton.frame.maxX + Self.settingsButtonGap,
+            y: pinButton.frame.minY,
+            width: size.width,
+            height: size.height)
     }
 
     @objc private func pinButtonPressed() {
         onPinToggle?()
+    }
+
+    @objc private func settingsButtonPressed() {
+        onSettingsOpen?(settingsButton)
     }
 
     private static func split(_ text: String) -> (sessionPercent: String, weeklyPercent: String) {
@@ -669,12 +774,13 @@ final class IslandView: NSView {
     }
 
     private var pinSlotWidth: CGFloat {
-        showsPin ? Self.pinButtonSize.width + Self.pinButtonGap : 0
+        showsPin ? Self.pinButtonSize.width * 2 + Self.pinButtonGap + Self.settingsButtonGap : 0
     }
 
     private static let iconViewSize = NSSize(width: 16, height: 16)
     private static let pinButtonSize = NSSize(width: 18, height: 18)
     private static let pinButtonGap: CGFloat = 8
+    private static let settingsButtonGap: CGFloat = 6
     private static let labelFont = NSFont.monospacedSystemFont(ofSize: 11, weight: .semibold)
 }
 
@@ -923,6 +1029,36 @@ final class PinButton: NSButton {
             accessibilityDescription: pinned ? "Pinned open" : "Auto hide")
         symbol?.isTemplate = true
         image = symbol?.withSymbolConfiguration(configuration)
+    }
+}
+
+final class SettingsButton: NSButton {
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        isBordered = false
+        imagePosition = .imageOnly
+        setButtonType(.momentaryChange)
+        focusRingType = .none
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
+        toolTip = "Settings"
+        contentTintColor = NSColor.white.withAlphaComponent(0.72)
+
+        let configuration = NSImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
+        let symbol = NSImage(
+            systemSymbolName: "gearshape",
+            accessibilityDescription: "Settings")
+        symbol?.isTemplate = true
+        image = symbol?.withSymbolConfiguration(configuration)
+    }
+
+    @available(*, unavailable)
+    required init?(coder _: NSCoder) {
+        nil
+    }
+
+    override var acceptsFirstResponder: Bool {
+        false
     }
 }
 
