@@ -1,6 +1,13 @@
 import AppKit
 import AgentBarCore
 
+struct AccountRowDisplayModel: Equatable {
+    let id: String
+    let title: String
+    let subtitle: String
+    let isCurrent: Bool
+}
+
 @main
 enum AgentBarMain {
     @MainActor private static var delegate: AppDelegate?
@@ -83,18 +90,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 final class IslandWindowController {
     private var overlays: [ScreenOverlay] = []
     private let snapshotService = CodexSnapshotService()
+    private let accountStore = CodexAccountStore()
     private let preferences = AgentBarPreferences()
     private let updater: AgentBarUpdater
     private var settingsWindowController: AgentBarSettingsWindowController?
     private weak var settingsAnchor: NSView?
     private var refreshTask: Task<Void, Never>?
     private var hoverTimer: Timer?
+    private var accountsSnapshot = CodexStoredAccountsSnapshot(currentAccountID: nil, accounts: [])
     private var currentCosts = CodexCostSnapshot(
         todayCostUSD: 0,
         todayTokens: 0,
         last30DaysCostUSD: 0,
         last30DaysTokens: 0)
     private var currentText = "5h --%   7d --%      Today: $0.00 \u{00B7} -- / ~30 Days: $0.00 \u{00B7} -- Tokens"
+    private let showsExpandedPreviewOnLaunch =
+        ProcessInfo.processInfo.environment["AGENT_BAR_SHOW_EXPANDED_ON_LAUNCH"] == "1"
+    private let previewExportURL = ProcessInfo.processInfo.environment["AGENT_BAR_EXPORT_PREVIEW_PNG"].flatMap(URL.init(fileURLWithPath:))
 
     init(updater: AgentBarUpdater) {
         self.updater = updater
@@ -103,6 +115,7 @@ final class IslandWindowController {
             currentCosts = cachedSnapshot.costs
             currentText = AgentBarDisplayFormatting.line(snapshot: cachedSnapshot)
         }
+        accountsSnapshot = accountStore.captureCurrentAccount()
 
         NotificationCenter.default.addObserver(
             self,
@@ -134,6 +147,7 @@ final class IslandWindowController {
         updateOverlays(animated: true)
 
         let snapshot = await snapshotService.snapshot()
+        accountsSnapshot = accountStore.captureCurrentAccount()
         currentCosts = snapshot.costs
         currentText = AgentBarDisplayFormatting.line(snapshot: snapshot)
         updateOverlays(animated: true)
@@ -149,29 +163,42 @@ final class IslandWindowController {
             overlay.view.onPinToggle = { [weak self] in
                 self?.togglePinned()
             }
+            overlay.view.onBodyToggle = { [weak self, weak overlay] in
+                guard let overlay else { return }
+                self?.toggleExpanded(for: overlay)
+            }
             overlay.view.onSettingsOpen = { [weak self] anchor in
                 self?.toggleSettings(relativeTo: anchor)
             }
             overlay.view.update(text: currentText, animated: false)
+            overlay.view.updateAccounts(accountRows())
             overlay.view.setPinned(preferences.isPinned)
             overlay.isHovered = isMouseHovering(overlay, at: mouseLocation)
             overlay.isCollapsed = shouldCollapse(overlay)
+            if showsExpandedPreviewOnLaunch, overlay.autoHideEligible {
+                overlay.isHovered = true
+                overlay.isCollapsed = false
+                overlay.isExpanded = true
+                overlay.view.setExpanded(true)
+            }
             overlay.view.setHovering(overlay.isHovered)
-            overlay.panel.ignoresMouseEvents = !overlay.isHovered
+            syncPanelInteractivity(for: overlay)
             position(overlay, animated: false)
             overlay.panel.orderFrontRegardless()
             return overlay
         }
         updateHoverState(animated: false)
+        exportPreviewIfNeeded()
     }
 
     private func updateOverlays(animated: Bool = false) {
         for overlay in overlays {
             let textChanged = overlay.view.update(text: currentText, animated: animated)
+            let accountsChanged = overlay.view.updateAccounts(accountRows())
             overlay.view.setPinned(preferences.isPinned)
             position(
                 overlay,
-                animated: animated && textChanged,
+                animated: animated && (textChanged || accountsChanged),
                 duration: contentUpdateAnimationDuration)
         }
         updateHoverState(animated: false)
@@ -250,10 +277,15 @@ final class IslandWindowController {
             if overlay.isHovered != isHovered {
                 overlay.isHovered = isHovered
                 overlay.view.setHovering(isHovered)
-                overlay.panel.ignoresMouseEvents = !isHovered
+                syncPanelInteractivity(for: overlay)
             }
 
             let shouldCollapse = shouldCollapse(overlay)
+            if shouldCollapse, overlay.isExpanded {
+                overlay.isExpanded = false
+                overlay.view.setExpanded(false)
+                syncPanelInteractivity(for: overlay)
+            }
             guard overlay.isCollapsed != shouldCollapse else { continue }
             overlay.isCollapsed = shouldCollapse
             position(overlay, animated: animated)
@@ -261,7 +293,10 @@ final class IslandWindowController {
     }
 
     private func shouldCollapse(_ overlay: ScreenOverlay) -> Bool {
-        overlay.autoHideEligible &&
+        if showsExpandedPreviewOnLaunch, overlay.autoHideEligible {
+            return false
+        }
+        return overlay.autoHideEligible &&
             !preferences.isPinned &&
             !overlay.isHovered &&
             !isSettingsOpen(for: overlay)
@@ -289,6 +324,14 @@ final class IslandWindowController {
             overlay.view.setPinned(preferences.isPinned)
         }
         updateHoverState(animated: true)
+    }
+
+    private func toggleExpanded(for overlay: ScreenOverlay) {
+        overlay.isExpanded.toggle()
+        overlay.isCollapsed = shouldCollapse(overlay)
+        overlay.view.setExpanded(overlay.isExpanded)
+        syncPanelInteractivity(for: overlay)
+        position(overlay, animated: true)
     }
 
     private func toggleSettings(relativeTo anchor: NSView) {
@@ -325,9 +368,68 @@ final class IslandWindowController {
         NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : Self.contentUpdateAnimationDuration
     }
 
+    private func syncPanelInteractivity(for overlay: ScreenOverlay) {
+        if overlay.autoHideEligible {
+            overlay.panel.ignoresMouseEvents = !(overlay.isHovered || overlay.isExpanded)
+        } else {
+            overlay.panel.ignoresMouseEvents = false
+        }
+    }
+
+    private func accountRows() -> [AccountRowDisplayModel] {
+        accountsSnapshot.accounts.map { account in
+            let title = account.email ?? account.accountName ?? account.accountID ?? "Codex Account"
+            var subtitleParts: [String] = []
+            if let accountName = account.accountName,
+               let email = account.email,
+               !accountName.isEmpty,
+               accountName.caseInsensitiveCompare(email) != .orderedSame
+            {
+                subtitleParts.append(accountName)
+            }
+            if let planType = account.planType {
+                subtitleParts.append(planType.capitalized)
+            }
+            if let accountID = account.accountID {
+                subtitleParts.append(Self.compactAccountID(accountID))
+            }
+            let isCurrent = account.id == accountsSnapshot.currentAccountID
+            if isCurrent {
+                subtitleParts.insert("Current", at: 0)
+            }
+            return AccountRowDisplayModel(
+                id: account.id,
+                title: title,
+                subtitle: subtitleParts.isEmpty ? "Saved login" : subtitleParts.joined(separator: "  ·  "),
+                isCurrent: isCurrent)
+        }
+    }
+
     private static let menuBarAutoHideAnimationDuration: TimeInterval = 0.26
     private static let contentUpdateAnimationDuration: TimeInterval = 0.44
     private static let revealZoneHeight: CGFloat = 10
+
+    private static func compactAccountID(_ value: String) -> String {
+        guard value.count > 14 else { return value }
+        return "\(value.prefix(6))...\(value.suffix(4))"
+    }
+
+    private func exportPreviewIfNeeded() {
+        guard let previewExportURL else { return }
+        let overlay = overlays.first { $0.autoHideEligible } ?? overlays.first
+        guard let overlay else { return }
+        overlay.view.layoutSubtreeIfNeeded()
+        let bounds = overlay.view.bounds.integral
+        guard !bounds.isEmpty,
+              let rep = overlay.view.bitmapImageRepForCachingDisplay(in: bounds)
+        else {
+            return
+        }
+
+        overlay.view.cacheDisplay(in: bounds, to: rep)
+        guard let pngData = rep.representation(using: .png, properties: [:]) else { return }
+        try? pngData.write(to: previewExportURL)
+    }
 }
 
 @MainActor
@@ -338,6 +440,7 @@ final class ScreenOverlay {
     let autoHideEligible: Bool
     var isHovered = false
     var isCollapsed = false
+    var isExpanded = false
     var visibleFrame = NSRect.zero
     var lastTargetFrame = NSRect.zero
 
@@ -374,6 +477,10 @@ final class IslandView: NSView {
     private let usageLabel = RollingTextLabel()
     private let pinButton = PinButton()
     private let settingsButton = SettingsButton()
+    private let accountsContainer = FlippedContainerView()
+    private let emptyStateLabel = NSTextField(labelWithString: "Saved logins show up here")
+    private var accountViews: [AccountRowView] = []
+    private var accountRows: [AccountRowDisplayModel] = []
     private var horizontalPadding: CGFloat = 0
     private var notchInnerPadding: CGFloat = 0
     private var notchHeight: CGFloat = 24
@@ -381,9 +488,11 @@ final class IslandView: NSView {
     private(set) var notchLeftLaneWidth: CGFloat = 0
     private var showsPin = false
     private var isHovering = false
+    private var isExpanded = false
     private var style: Style = .attachedBar(height: 32, showsPin: false)
     var onPinToggle: (() -> Void)?
     var onSettingsOpen: ((NSView) -> Void)?
+    var onBodyToggle: (() -> Void)?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -402,6 +511,13 @@ final class IslandView: NSView {
         iconView.imageScaling = .scaleProportionallyUpOrDown
         iconView.contentTintColor = .white
 
+        emptyStateLabel.font = .systemFont(ofSize: 10.5, weight: .medium)
+        emptyStateLabel.textColor = NSColor.white.withAlphaComponent(0.52)
+        emptyStateLabel.alignment = .center
+
+        accountsContainer.addSubview(emptyStateLabel)
+
+        addSubview(accountsContainer)
         addSubview(iconView)
         addSubview(fullLabel)
         addSubview(quotaLabel)
@@ -430,6 +546,7 @@ final class IslandView: NSView {
         case .notch:
             layoutNotch()
         }
+        layoutExpandedContent()
     }
 
     override var isOpaque: Bool {
@@ -441,14 +558,38 @@ final class IslandView: NSView {
 
         guard let context = NSGraphicsContext.current?.cgContext else { return }
 
-        switch style {
-        case .attachedBar, .notch:
+        if isExpanded, !expandedBodyRect.isEmpty {
             context.saveGState()
-            context.addPath(Self.topAttachedIslandPath(in: bounds))
+            context.setFillColor(NSColor(calibratedWhite: 0.08, alpha: 0.97).cgColor)
+            context.addPath(Self.expandedIslandPath(barRect: barRect, bodyRect: expandedBodyRect))
+            context.fillPath()
+            context.restoreGState()
+        } else {
+            context.saveGState()
+            context.addPath(Self.topAttachedIslandPath(in: barRect))
             context.setFillColor(NSColor.black.cgColor)
             context.fillPath()
             context.restoreGState()
         }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard allowsAccountExpansion else {
+            super.mouseDown(with: event)
+            return
+        }
+        let point = convert(event.locationInWindow, from: nil)
+        guard barRect.contains(point) else {
+            super.mouseDown(with: event)
+            return
+        }
+
+        if pinButton.frame.contains(point) || settingsButton.frame.contains(point) {
+            super.mouseDown(with: event)
+            return
+        }
+
+        onBodyToggle?()
     }
 
     @available(*, unavailable)
@@ -472,6 +613,16 @@ final class IslandView: NSView {
         return textChanged
     }
 
+    @discardableResult
+    func updateAccounts(_ rows: [AccountRowDisplayModel]) -> Bool {
+        guard rows != accountRows else { return false }
+        accountRows = rows
+        rebuildAccountViews()
+        needsLayout = true
+        needsDisplay = true
+        return true
+    }
+
     func setPinned(_ isPinned: Bool) {
         pinButton.setPinned(isPinned)
     }
@@ -479,6 +630,13 @@ final class IslandView: NSView {
     func setHovering(_ hovering: Bool) {
         guard hovering != isHovering else { return }
         isHovering = hovering
+    }
+
+    func setExpanded(_ expanded: Bool) {
+        guard allowsAccountExpansion, isExpanded != expanded else { return }
+        isExpanded = expanded
+        needsLayout = true
+        needsDisplay = true
     }
 
     func configure(_ style: Style) {
@@ -495,8 +653,6 @@ final class IslandView: NSView {
             pinButton.alphaValue = showsPin ? 1 : 0
             settingsButton.isHidden = !showsPin
             settingsButton.alphaValue = showsPin ? 1 : 0
-            layer?.backgroundColor = NSColor.clear.cgColor
-            layer?.cornerRadius = 0
             fullLabel.lineBreakMode = .byClipping
             fullLabel.isHidden = false
             quotaLabel.isHidden = true
@@ -511,8 +667,6 @@ final class IslandView: NSView {
             pinButton.alphaValue = 0
             settingsButton.isHidden = true
             settingsButton.alphaValue = 0
-            layer?.backgroundColor = NSColor.clear.cgColor
-            layer?.cornerRadius = 0
             quotaLabel.lineBreakMode = .byClipping
             usageLabel.lineBreakMode = .byClipping
             fullLabel.isHidden = true
@@ -524,15 +678,16 @@ final class IslandView: NSView {
     }
 
     func fittingSize(constrainedTo maxWidth: CGFloat) -> NSSize {
+        let barWidth: CGFloat
         switch style {
-        case let .attachedBar(height, _):
+        case .attachedBar:
             let iconGap: CGFloat = 8
             let labelSafety: CGFloat = 28
             let fixedWidth = horizontalPadding * 2 + iconViewSize.width + iconGap + pinSlotWidth
             let labelWidth = min(
                 fullLabel.intrinsicContentSize.width + labelSafety,
                 max(0, maxWidth - fixedWidth))
-            return NSSize(width: fixedWidth + labelWidth, height: height)
+            barWidth = fixedWidth + labelWidth
         case .notch:
             let iconWidth = iconViewSize.width
             let iconGap: CGFloat = 8
@@ -542,16 +697,20 @@ final class IslandView: NSView {
             let leftWidth = ceil(horizontalPadding + leftContentWidth + notchInnerPadding)
             let rightWidth = ceil(notchInnerPadding + rightContentWidth + labelSafety + horizontalPadding)
             notchLeftLaneWidth = leftWidth
-            let width = min(maxWidth, leftWidth + notchGapWidth + rightWidth)
-            return NSSize(width: width, height: notchHeight)
+            barWidth = leftWidth + notchGapWidth + rightWidth
         }
+
+        let bodyWidth = isExpanded && allowsAccountExpansion ? expandedPreferredWidth : 0
+        let width = min(maxWidth, max(barWidth, bodyWidth))
+        let height = currentBarHeight + (isExpanded && allowsAccountExpansion ? Self.expandedBridgeHeight + expandedBodyHeight : 0)
+        return NSSize(width: width, height: height)
     }
 
     private func layoutAttachedBar() {
         iconView.isHidden = false
 
         let textHeight = ceil(fullLabel.intrinsicContentSize.height)
-        let centerY = bounds.midY
+        let centerY = barRect.midY
         let labelY = floor(centerY - textHeight / 2)
         let iconY = floor(centerY - iconViewSize.height / 2)
         let iconGap: CGFloat = 8
@@ -559,9 +718,9 @@ final class IslandView: NSView {
         let pinWidth = pinSlotWidth
         let labelWidth = min(
             fullLabel.intrinsicContentSize.width + labelSafety,
-            max(0, bounds.width - horizontalPadding * 2 - iconViewSize.width - iconGap - pinWidth))
+            max(0, barRect.width - horizontalPadding * 2 - iconViewSize.width - iconGap - pinWidth))
         let totalWidth = iconViewSize.width + iconGap + labelWidth + pinWidth
-        let startX = max(horizontalPadding, floor((bounds.width - totalWidth) / 2))
+        let startX = max(horizontalPadding, floor((barRect.width - totalWidth) / 2))
 
         iconView.frame = NSRect(x: startX, y: iconY, width: iconViewSize.width, height: iconViewSize.height)
         fullLabel.frame = NSRect(
@@ -578,7 +737,7 @@ final class IslandView: NSView {
         settingsButton.frame = .zero
 
         let textHeight = ceil(max(quotaLabel.intrinsicContentSize.height, usageLabel.intrinsicContentSize.height))
-        let centerY = bounds.midY
+        let centerY = barRect.midY
         let labelY = floor(centerY - textHeight / 2)
         let iconY = floor(centerY - iconViewSize.height / 2)
         let gapStart = notchLeftLaneWidth
@@ -604,13 +763,47 @@ final class IslandView: NSView {
         usageLabel.frame = NSRect(
             x: usageX,
             y: labelY,
-            width: min(usageWidth + labelSafety, max(0, bounds.width - usageX - horizontalPadding)),
+            width: min(usageWidth + labelSafety, max(0, barRect.width - usageX - horizontalPadding)),
             height: textHeight)
+    }
+
+    private func layoutExpandedContent() {
+        guard isExpanded, allowsAccountExpansion else {
+            accountsContainer.frame = .zero
+            return
+        }
+
+        let bodyRect = expandedBodyRect.insetBy(dx: Self.expandedBodyHorizontalInset, dy: Self.expandedContentVerticalInset)
+        accountsContainer.frame = bodyRect
+
+        if accountViews.isEmpty {
+            emptyStateLabel.isHidden = false
+            emptyStateLabel.frame = NSRect(x: 0, y: max(0, floor((bodyRect.height - 20) / 2)), width: bodyRect.width, height: 20)
+            return
+        }
+
+        emptyStateLabel.isHidden = true
+        var y = Self.expandedBodyVerticalPadding
+        for (index, view) in accountViews.enumerated() {
+            view.frame = NSRect(x: 0, y: y, width: bodyRect.width, height: Self.accountRowHeight)
+            view.showsDivider = index < accountViews.count - 1
+            y += Self.accountRowHeight
+        }
+    }
+
+    private func rebuildAccountViews() {
+        accountViews.forEach { $0.removeFromSuperview() }
+        accountViews = accountRows.map(AccountRowView.init(model:))
+        for view in accountViews {
+            accountsContainer.addSubview(view)
+        }
+        emptyStateLabel.isHidden = !accountViews.isEmpty
     }
 
     private func layoutPinButton(after x: CGFloat, centerY: CGFloat) {
         guard showsPin else {
             pinButton.frame = .zero
+            settingsButton.frame = .zero
             return
         }
 
@@ -633,6 +826,56 @@ final class IslandView: NSView {
 
     @objc private func settingsButtonPressed() {
         onSettingsOpen?(settingsButton)
+    }
+
+    private var expandedPreferredWidth: CGFloat {
+        let contentWidth = max(
+            accountViews.map(\.preferredWidth).max() ?? 0,
+            ceil(emptyStateLabel.intrinsicContentSize.width))
+        return contentWidth + Self.expandedBodyHorizontalInset * 2 + 28
+    }
+
+    private var expandedBodyHeight: CGFloat {
+        let rowCount = max(1, accountViews.isEmpty ? 1 : accountViews.count)
+        return Self.expandedBodyVerticalPadding * 2 +
+            Self.accountRowHeight * CGFloat(rowCount) +
+            Self.expandedContentVerticalInset * 2
+    }
+
+    private var currentBarHeight: CGFloat {
+        switch style {
+        case let .attachedBar(height, _):
+            return height
+        case let .notch(height, _):
+            return height
+        }
+    }
+
+    private var barRect: NSRect {
+        NSRect(x: 0, y: bounds.height - currentBarHeight, width: bounds.width, height: currentBarHeight)
+    }
+
+    private var expandedBodyRect: NSRect {
+        guard isExpanded, allowsAccountExpansion else { return .zero }
+        let bodyWidthRatio: CGFloat = barRect.width >= 900 ? 0.84 : 0.90
+        let targetBodyWidth = max(
+            Self.expandedBodyMinWidth,
+            min(Self.expandedBodyMaxWidth, barRect.width * bodyWidthRatio))
+        let maxBodyWidth = min(bounds.width - Self.expandedBodySideInset * 2, Self.expandedBodyMaxWidth)
+        let bodyWidth = min(maxBodyWidth, max(targetBodyWidth, expandedPreferredWidth))
+        let bodyX = floor((bounds.width - bodyWidth) / 2)
+        return NSRect(
+            x: bodyX,
+            y: 0,
+            width: bodyWidth,
+            height: expandedBodyHeight)
+    }
+
+    private var allowsAccountExpansion: Bool {
+        if case .attachedBar = style {
+            return true
+        }
+        return false
     }
 
     private static func split(_ text: String) -> (sessionPercent: String, weeklyPercent: String) {
@@ -747,6 +990,59 @@ final class IslandView: NSView {
         return path
     }
 
+    private static func expandedIslandPath(barRect: CGRect, bodyRect: CGRect) -> CGPath {
+        let path = CGMutablePath()
+        guard !barRect.isEmpty, !bodyRect.isEmpty else {
+            path.addPath(topAttachedIslandPath(in: barRect))
+            return path
+        }
+        let topRadius = min(6, barRect.width * 0.25, barRect.height * 0.25)
+        let barBottomRadius = min(16, barRect.height * 0.5, barRect.width / 2)
+        let bodyCorner = min(28, bodyRect.height * 0.30, bodyRect.width * 0.08)
+        let attachRadius = min(26, bodyRect.width * 0.07, barRect.height * 0.86)
+        let rightShoulderX = min(
+            bodyRect.maxX + attachRadius,
+            barRect.maxX - topRadius - barBottomRadius - 4)
+        let leftShoulderX = max(
+            bodyRect.minX - attachRadius,
+            barRect.minX + topRadius + barBottomRadius + 4)
+
+        path.move(to: CGPoint(x: barRect.minX, y: barRect.maxY))
+        path.addLine(to: CGPoint(x: barRect.maxX, y: barRect.maxY))
+        path.addQuadCurve(
+            to: CGPoint(x: barRect.maxX - topRadius, y: barRect.maxY - topRadius),
+            control: CGPoint(x: barRect.maxX - topRadius, y: barRect.maxY))
+        path.addLine(to: CGPoint(x: barRect.maxX - topRadius, y: barRect.minY + barBottomRadius))
+        path.addQuadCurve(
+            to: CGPoint(x: barRect.maxX - topRadius - barBottomRadius, y: barRect.minY),
+            control: CGPoint(x: barRect.maxX - topRadius, y: barRect.minY))
+        path.addLine(to: CGPoint(x: rightShoulderX, y: barRect.minY))
+        path.addQuadCurve(
+            to: CGPoint(x: bodyRect.maxX, y: barRect.minY - attachRadius),
+            control: CGPoint(x: bodyRect.maxX, y: barRect.minY))
+        path.addLine(to: CGPoint(x: bodyRect.maxX, y: bodyRect.minY + bodyCorner))
+        path.addQuadCurve(
+            to: CGPoint(x: bodyRect.maxX - bodyCorner, y: bodyRect.minY),
+            control: CGPoint(x: bodyRect.maxX, y: bodyRect.minY))
+        path.addLine(to: CGPoint(x: bodyRect.minX + bodyCorner, y: bodyRect.minY))
+        path.addQuadCurve(
+            to: CGPoint(x: bodyRect.minX, y: bodyRect.minY + bodyCorner),
+            control: CGPoint(x: bodyRect.minX, y: bodyRect.minY))
+        path.addLine(to: CGPoint(x: bodyRect.minX, y: barRect.minY - attachRadius))
+        path.addQuadCurve(
+            to: CGPoint(x: leftShoulderX, y: barRect.minY),
+            control: CGPoint(x: bodyRect.minX, y: barRect.minY))
+        path.addLine(to: CGPoint(x: barRect.minX + topRadius + barBottomRadius, y: barRect.minY))
+        path.addQuadCurve(
+            to: CGPoint(x: barRect.minX + topRadius, y: barRect.minY + barBottomRadius),
+            control: CGPoint(x: barRect.minX + topRadius, y: barRect.minY))
+        path.addLine(to: CGPoint(x: barRect.minX + topRadius, y: barRect.maxY - topRadius))
+        path.addQuadCurve(
+            to: CGPoint(x: barRect.minX, y: barRect.maxY),
+            control: CGPoint(x: barRect.minX + topRadius, y: barRect.maxY))
+        return path
+    }
+
     private static func codexIcon() -> NSImage? {
         guard let url = resourceURL(for: "ProviderIcon-codex", withExtension: "svg"),
               let image = NSImage(contentsOf: url)
@@ -782,6 +1078,97 @@ final class IslandView: NSView {
     private static let pinButtonGap: CGFloat = 8
     private static let settingsButtonGap: CGFloat = 6
     private static let labelFont = NSFont.monospacedSystemFont(ofSize: 11, weight: .semibold)
+    private static let expandedBodyHorizontalInset: CGFloat = 22
+    private static let expandedBodyVerticalPadding: CGFloat = 14
+    private static let expandedContentVerticalInset: CGFloat = 12
+    private static let expandedBridgeHeight: CGFloat = 0
+    private static let expandedBodySideInset: CGFloat = 20
+    private static let expandedBodyMinWidth: CGFloat = 560
+    private static let expandedBodyMaxWidth: CGFloat = 960
+    private static let accountRowHeight: CGFloat = 42
+}
+
+final class FlippedContainerView: NSView {
+    override var isFlipped: Bool {
+        true
+    }
+}
+
+final class AccountRowView: NSView {
+    private let titleLabel = NSTextField(labelWithString: "")
+    private let subtitleLabel = NSTextField(labelWithString: "")
+    private let currentDot = NSView()
+    private let model: AccountRowDisplayModel
+
+    var showsDivider = false {
+        didSet {
+            needsDisplay = true
+        }
+    }
+
+    init(model: AccountRowDisplayModel) {
+        self.model = model
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
+
+        titleLabel.stringValue = model.title
+        titleLabel.font = .systemFont(ofSize: 11, weight: .semibold)
+        titleLabel.textColor = NSColor.white.withAlphaComponent(0.96)
+        titleLabel.lineBreakMode = .byTruncatingMiddle
+        titleLabel.maximumNumberOfLines = 1
+
+        subtitleLabel.stringValue = model.subtitle
+        subtitleLabel.font = .systemFont(ofSize: 9.5, weight: .regular)
+        subtitleLabel.textColor = NSColor.white.withAlphaComponent(0.56)
+        subtitleLabel.lineBreakMode = .byTruncatingMiddle
+        subtitleLabel.maximumNumberOfLines = 1
+
+        currentDot.wantsLayer = true
+        currentDot.layer?.cornerRadius = 3
+        currentDot.layer?.backgroundColor = NSColor.systemBlue.cgColor
+        currentDot.isHidden = !model.isCurrent
+
+        addSubview(titleLabel)
+        addSubview(subtitleLabel)
+        addSubview(currentDot)
+    }
+
+    override var isFlipped: Bool {
+        true
+    }
+
+    override func layout() {
+        super.layout()
+        let insetX: CGFloat = 14
+        titleLabel.frame = NSRect(x: insetX, y: 6, width: max(0, bounds.width - insetX * 2 - 12), height: 15)
+        subtitleLabel.frame = NSRect(x: insetX, y: 21, width: max(0, bounds.width - insetX * 2), height: 13)
+        currentDot.frame = NSRect(x: bounds.width - insetX - 6, y: 10, width: 6, height: 6)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard showsDivider, let context = NSGraphicsContext.current?.cgContext else { return }
+        context.saveGState()
+        context.setStrokeColor(NSColor.white.withAlphaComponent(0.08).cgColor)
+        context.setLineWidth(1)
+        context.move(to: CGPoint(x: 14, y: bounds.height - 0.5))
+        context.addLine(to: CGPoint(x: bounds.width - 14, y: bounds.height - 0.5))
+        context.strokePath()
+        context.restoreGState()
+    }
+
+    var preferredWidth: CGFloat {
+        let widestLabel = max(
+            ceil(titleLabel.intrinsicContentSize.width),
+            ceil(subtitleLabel.intrinsicContentSize.width))
+        return widestLabel + 14 * 2 + (model.isCurrent ? 12 : 0)
+    }
+
+    @available(*, unavailable)
+    required init?(coder _: NSCoder) {
+        nil
+    }
 }
 
 final class RollingTextLabel: NSView {

@@ -4,6 +4,7 @@
 
 | 日期 | 功能域 | 用户价值 | 变更摘要 |
 | --- | --- | --- | --- |
+| 2026-04-24 | 顶部账号展开 | 点击顶部 bar 可以直接展开查看本机最近登录过的多个 Codex 账号，不用只盯着当前 `auth.json`。 | 给无 notch 普通屏幕的主 bar 增加点击展开交互，向下动画展示多账号列表；每次检测到新的本地 OAuth 登录态时，自动把 token 和最小账号元数据写入 `~/.agentbar/accounts.json` 并去重排序。 |
 | 2026-04-24 | 设置窗口 | 用户可以直接从顶部 bar 右侧齿轮管理开机自动启动和自动更新，也可以在 About 页面进入 GitHub 仓库。 | 在 PIN 右侧新增常驻 gear icon，点击打开紧凑 macOS preferences 风格设置窗口；接入 `SMAppService.mainApp` 开机启动开关、Sparkle 自动更新开关和 About GitHub 页面，并使用 `#226CFF` 选中态。 |
 | 2026-04-24 | 自动更新 | 安装过 Sparkle 版本后，AgentBar 可以从 GitHub Releases 自动检测新版本，后台下载完成后再让用户确认是否安装；跳过某个版本后，同版本不会重复打扰。 | 接入 Sparkle 2.9.1，自定义更新确认流程，release workflow 生成并上传签名 `appcast.xml`，DMG 内嵌 `Sparkle.framework` 和公钥配置。 |
 | 2026-04-24 | 多屏体验 | 在无 notch 的普通屏幕上，AgentBar 可以跟随顶部菜单栏的隐藏语境自动收起，减少全屏或自动隐藏菜单栏时的视觉冲突；需要常驻时可以点右侧常驻 pin 固定，并在重启后保留选择。 | 新增无 notch 屏幕 auto-hide eligibility、顶部 hover 唤出区、0.26s 滑入滑出动画、右侧常驻 SF Symbols pin 状态按钮，以及 `UserDefaults` 持久化的 pin 偏好。 |

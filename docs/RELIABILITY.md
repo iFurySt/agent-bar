@@ -13,6 +13,8 @@
 - 后台刷新保持静默，不显示状态点，避免快速刷新时造成视觉闪烁。
 - 刷新后的数字变化只触发短时本地绘制动画，宽度变化使用 AppKit frame 动画；系统开启 Reduce Motion 时直接更新，不额外制造动画负担。
 - 无 notch 普通屏幕用 30Hz 主线程 timer 轮询鼠标位置来做顶部唤出，不依赖额外 Accessibility 权限；窗口平时仍默认透传鼠标事件。
+- 每次刷新都会尝试从当前 `auth.json` 同步一份本地账号快照到 `~/.agentbar/accounts.json`；如果账号仓库写入失败，顶部 bar 仍继续刷新 quota/cost，只是展开面板不会看到最新账号。
+- 顶部 bar 的展开面板不依赖额外网络请求，只消费本地已记录账号；当前账号会在每轮刷新里重新 upsert，旧账号按最近一次出现时间排序。
 - Sparkle 按 24 小时间隔检查 GitHub Release appcast。发现更新后先后台下载，只有下载和解包完成后才弹出安装确认；用户跳过后，同一个 `sparkle:version` 不再提醒。
 - 设置窗口里的开机启动开关使用 macOS `SMAppService.mainApp`；如果当前运行形态不是可注册 app bundle，失败会回退开关状态并显示系统错误。
 - 设置窗口打开时只激活应用并使用普通 window level 展示，避免窗口置顶后阻止用户切换到其他应用或窗口。由于 `.accessory` app 默认不会进入 Command+Tab，打开设置时临时切到 `.regular`，关闭设置后切回 `.accessory`；启动和切入 `.regular` 时显式设置 `NSApp.applicationIconImage` 并刷新 `NSDockTile`，避免临时 Dock 图标退回默认图标。设置窗口自身处理 `Command+W`，不依赖标准 app 菜单也能关闭。
@@ -26,3 +28,5 @@ AGENT_BAR_RELEASE_ARCH=native AGENT_BAR_RELEASE_VERSION=0.0.0-test ./scripts/rel
 ```
 
 如果 5h/7d 显示 `--%`，优先检查 `codex` 是否已登录、最近 session 里是否存在 `token_count.rate_limits`，以及 `~/.agentbar/cache.json` 是否可写。
+
+如果点击 bar 没有展开出账号列表，优先检查 `~/.codex/auth.json` 当前是否为 OAuth 登录、`~/.agentbar/accounts.json` 是否可写，以及 bar 当前是否运行在无 notch 普通屏幕。
