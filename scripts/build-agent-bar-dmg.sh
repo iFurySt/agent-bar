@@ -10,6 +10,8 @@ output_dir=""
 codesign_mode="${AGENT_BAR_CODESIGN_MODE:-adhoc}"
 codesign_identity="${AGENT_BAR_CODESIGN_IDENTITY:-}"
 codesign_keychain="${AGENT_BAR_CODESIGN_KEYCHAIN:-}"
+sparkle_feed_url="${AGENT_BAR_SPARKLE_FEED_URL:-https://github.com/iFurySt/agent-bar/releases/latest/download/appcast.xml}"
+sparkle_public_ed_key="${AGENT_BAR_SPARKLE_PUBLIC_ED_KEY:-m30I6HdBwFU7K1JLQyDdrxEbt20YzIXbFAnGdyOz29s=}"
 
 usage() {
   cat <<'EOF'
@@ -19,6 +21,8 @@ Environment:
   AGENT_BAR_CODESIGN_MODE=identity|adhoc|none
   AGENT_BAR_CODESIGN_IDENTITY="Developer ID Application: Example, Inc. (TEAMID)"
   AGENT_BAR_CODESIGN_KEYCHAIN=/path/to/signing.keychain-db
+  AGENT_BAR_SPARKLE_FEED_URL=https://github.com/iFurySt/agent-bar/releases/latest/download/appcast.xml
+  AGENT_BAR_SPARKLE_PUBLIC_ED_KEY=base64-public-ed25519-key
 EOF
 }
 
@@ -207,6 +211,49 @@ codesign_app_bundle() {
   fi
 }
 
+find_sparkle_framework() {
+  if [[ -n "${AGENT_BAR_SPARKLE_FRAMEWORK_PATH:-}" ]]; then
+    printf '%s\n' "${AGENT_BAR_SPARKLE_FRAMEWORK_PATH}"
+    return
+  fi
+
+  local candidate=""
+  candidate="$(find "${repo_root}/.build" \
+    -path "*/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework" \
+    -type d \
+    | sort \
+    | tail -n 1)"
+  if [[ -n "${candidate}" ]]; then
+    printf '%s\n' "${candidate}"
+    return
+  fi
+
+  find "${repo_root}/.build" \
+    -path "*/Sparkle.framework" \
+    -type d \
+    | sort \
+    | tail -n 1
+}
+
+copy_sparkle_framework() {
+  local framework_source=""
+  framework_source="$(find_sparkle_framework)"
+  if [[ -z "${framework_source}" || ! -d "${framework_source}" ]]; then
+    echo "Missing Sparkle.framework. Run swift build before packaging or set AGENT_BAR_SPARKLE_FRAMEWORK_PATH." >&2
+    exit 1
+  fi
+
+  mkdir -p "${frameworks_dir}"
+  ditto "${framework_source}" "${frameworks_dir}/Sparkle.framework"
+}
+
+ensure_framework_rpath() {
+  local binary_path="${1:-}"
+  if ! otool -l "${binary_path}" | grep -q "@executable_path/../Frameworks"; then
+    install_name_tool -add_rpath "@executable_path/../Frameworks" "${binary_path}"
+  fi
+}
+
 app_name="AgentBar.app"
 executable_name="AgentBar"
 bundle_identifier="com.ifuryst.agentbar"
@@ -217,6 +264,7 @@ app_root="${output_dir}/${app_name}"
 contents_dir="${app_root}/Contents"
 macos_dir="${contents_dir}/MacOS"
 resources_dir="${contents_dir}/Resources"
+frameworks_dir="${contents_dir}/Frameworks"
 dmg_root="${output_dir}/dmg-root"
 dmg_path="${output_dir}/AgentBar-${version}.dmg"
 
@@ -266,6 +314,8 @@ fi
 
 cp -R "${resource_source_dir}" "${resources_dir}/${resource_bundle_name}"
 cp "${app_icon_source}" "${resources_dir}/${app_icon_name}"
+copy_sparkle_framework
+ensure_framework_rpath "${macos_dir}/${executable_name}"
 
 cat > "${contents_dir}/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -300,6 +350,16 @@ cat > "${contents_dir}/Info.plist" <<PLIST
   <true/>
   <key>NSPrincipalClass</key>
   <string>NSApplication</string>
+  <key>SUEnableAutomaticChecks</key>
+  <true/>
+  <key>SUEnableSystemProfiling</key>
+  <false/>
+  <key>SUFeedURL</key>
+  <string>${sparkle_feed_url}</string>
+  <key>SUPublicEDKey</key>
+  <string>${sparkle_public_ed_key}</string>
+  <key>SUScheduledCheckInterval</key>
+  <integer>86400</integer>
 </dict>
 </plist>
 PLIST

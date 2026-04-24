@@ -12,5 +12,7 @@
 ## 网络
 
 - 仅为获取实时 5h/7d quota 调用 `https://chatgpt.com/backend-api/wham/usage`。
+- 仅为检查和下载应用更新读取 `https://github.com/iFurySt/agent-bar/releases/latest/download/appcast.xml` 以及其中指向的 GitHub Release DMG。
 - access token 过期时，会按 CodexBar 参考实现刷新 OAuth token 并写回 `auth.json`，避免 refresh token 轮换后丢失。
 - usage API 失败时使用本地 session fallback，不要求持续联网。
+- 更新包由 Sparkle 校验 EdDSA 签名，签名不匹配时不会安装。

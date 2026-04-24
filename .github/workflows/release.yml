@@ -117,12 +117,28 @@ jobs:
 
           xcrun stapler staple "${dmg_path}"
 
+      - name: Generate Sparkle appcast
+        env:
+          AGENT_BAR_SPARKLE_PRIVATE_KEY: ${{ secrets.AGENT_BAR_SPARKLE_PRIVATE_KEY }}
+        run: |
+          if [ -z "${AGENT_BAR_SPARKLE_PRIVATE_KEY}" ]; then
+            echo "AGENT_BAR_SPARKLE_PRIVATE_KEY is required to generate signed Sparkle appcast.xml." >&2
+            exit 1
+          fi
+
+          ./scripts/generate-sparkle-appcast.sh \
+            --dmg-path "dist/release/agent-bar/AgentBar-${RELEASE_VERSION}.dmg" \
+            --version "${RELEASE_VERSION}" \
+            --release-tag "${RELEASE_TAG}" \
+            --output "dist/release/agent-bar/appcast.xml"
+
       - name: Upload release artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: agent-bar-release-artifacts
           path: |
             dist/release/agent-bar/AgentBar-*.dmg
+            dist/release/agent-bar/appcast.xml
           if-no-files-found: error
 
       - name: Generate build provenance
@@ -135,11 +151,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           dmg_path="dist/release/agent-bar/AgentBar-${RELEASE_VERSION}.dmg"
+          appcast_path="dist/release/agent-bar/appcast.xml"
 
           if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
-            gh release upload "${RELEASE_TAG}" "${dmg_path}" --clobber
+            gh release upload "${RELEASE_TAG}" "${dmg_path}" "${appcast_path}" --clobber
           else
-            gh release create "${RELEASE_TAG}" "${dmg_path}" \
+            gh release create "${RELEASE_TAG}" "${dmg_path}" "${appcast_path}" \
               --title "${RELEASE_TAG}" \
               --generate-notes
           fi

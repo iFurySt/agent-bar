@@ -19,8 +19,11 @@ enum AgentBarMain {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var controller: IslandWindowController?
+    private let updater = AgentBarUpdater()
 
     func applicationDidFinishLaunching(_: Notification) {
+        updater.start()
+
         let controller = IslandWindowController()
         self.controller = controller
         controller.show()

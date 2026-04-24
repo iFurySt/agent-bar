@@ -2,6 +2,9 @@
 import PackageDescription
 
 #if os(macOS)
+let dependencies: [Package.Dependency] = [
+    .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.1"),
+]
 let products: [Product] = [
     .executable(name: "AgentBar", targets: ["AgentBar"]),
 ]
@@ -10,7 +13,10 @@ let targets: [Target] = [
         name: "AgentBarCore"),
     .executableTarget(
         name: "AgentBar",
-        dependencies: ["AgentBarCore"],
+        dependencies: [
+            "AgentBarCore",
+            .product(name: "Sparkle", package: "Sparkle"),
+        ],
         resources: [
             .process("Resources"),
         ]),
@@ -19,6 +25,7 @@ let targets: [Target] = [
         dependencies: ["AgentBarCore"]),
 ]
 #else
+let dependencies: [Package.Dependency] = []
 let products: [Product] = []
 let targets: [Target] = [
     .target(
@@ -35,4 +42,5 @@ let package = Package(
         .macOS(.v14),
     ],
     products: products,
+    dependencies: dependencies,
     targets: targets)

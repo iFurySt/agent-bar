@@ -12,12 +12,14 @@
 - cost/token 扫描在后台任务中运行，避免阻塞 AppKit 主线程。
 - 后台刷新保持静默，不显示状态点，避免快速刷新时造成视觉闪烁。
 - 无 notch 普通屏幕用 30Hz 主线程 timer 轮询鼠标位置来做顶部唤出，不依赖额外 Accessibility 权限；窗口平时仍默认透传鼠标事件。
+- Sparkle 按 24 小时间隔检查 GitHub Release appcast。发现更新后先后台下载，只有下载和解包完成后才弹出安装确认；用户跳过后，同一个 `sparkle:version` 不再提醒。
 
 ## 验证
 
 ```sh
 swift test
 swift run AgentBar
+AGENT_BAR_RELEASE_ARCH=native AGENT_BAR_RELEASE_VERSION=0.0.0-test ./scripts/release-package.sh
 ```
 
 如果 5h/7d 显示 `--%`，优先检查 `codex` 是否已登录、最近 session 里是否存在 `token_count.rate_limits`，以及 `~/.agentbar/cache.json` 是否可写。
