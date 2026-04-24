@@ -31,7 +31,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 final class IslandWindowController {
     private var overlays: [ScreenOverlay] = []
     private let snapshotService = CodexSnapshotService()
+    private let preferences = AgentBarPreferences()
     private var refreshTask: Task<Void, Never>?
+    private var hoverTimer: Timer?
     private var currentCosts = CodexCostSnapshot(
         todayCostUSD: 0,
         todayTokens: 0,
@@ -55,6 +57,7 @@ final class IslandWindowController {
 
     func show() {
         rebuildOverlays()
+        startHoverTracking()
 
         refreshTask = Task { [weak self] in
             guard let self else { return }
@@ -86,23 +89,57 @@ final class IslandWindowController {
 
     private func rebuildOverlays() {
         overlays.forEach { $0.panel.orderOut(nil) }
+        let mouseLocation = NSEvent.mouseLocation
         overlays = NSScreen.screens.map { screen in
-            let overlay = ScreenOverlay(screen: screen)
+            let overlay = ScreenOverlay(
+                screen: screen,
+                autoHideEligible: screen.agentBarSupportsAutoHide)
+            overlay.view.onPinToggle = { [weak self] in
+                self?.togglePinned()
+            }
             overlay.view.update(text: currentText, isRefreshing: isRefreshing)
-            position(overlay)
+            overlay.view.setPinned(preferences.isPinned)
+            overlay.isHovered = isMouseHovering(overlay, at: mouseLocation)
+            overlay.isCollapsed = shouldCollapse(overlay)
+            overlay.view.setHovering(overlay.isHovered)
+            overlay.panel.ignoresMouseEvents = !overlay.isHovered
+            position(overlay, animated: false)
             overlay.panel.orderFrontRegardless()
             return overlay
         }
+        updateHoverState(animated: false)
     }
 
     private func updateOverlays() {
         for overlay in overlays {
             overlay.view.update(text: currentText, isRefreshing: isRefreshing)
-            position(overlay)
+            overlay.view.setPinned(preferences.isPinned)
+            position(overlay, animated: false)
+        }
+        updateHoverState(animated: false)
+    }
+
+    private func position(_ overlay: ScreenOverlay, animated: Bool) {
+        let targetFrame = targetFrame(for: overlay)
+        guard overlay.lastTargetFrame != targetFrame else { return }
+        overlay.lastTargetFrame = targetFrame
+
+        let updates = {
+            overlay.panel.setFrame(targetFrame, display: true)
+        }
+        guard animated, autoHideAnimationDuration > 0 else {
+            updates()
+            return
+        }
+
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = autoHideAnimationDuration
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            overlay.panel.animator().setFrame(targetFrame, display: true)
         }
     }
 
-    private func position(_ overlay: ScreenOverlay) {
+    private func targetFrame(for overlay: ScreenOverlay) -> NSRect {
         let screen = overlay.screen
         let topBarHeight = screen.agentBarTopBarHeight
         if let notchFrame = screen.agentBarNotchFrame {
@@ -115,12 +152,13 @@ final class IslandWindowController {
             let height = targetSize.height
             let x = notchFrame.midX - overlay.view.notchGapWidth / 2 - overlay.view.notchLeftLaneWidth
             let y = screen.frame.maxY - height
-            overlay.panel.setFrame(NSRect(x: x, y: y, width: width, height: height), display: true)
-            return
+            let frame = NSRect(x: x, y: y, width: width, height: height)
+            overlay.visibleFrame = frame
+            return frame
         }
 
-        overlay.panel.level = .statusBar
-        overlay.view.configure(.attachedBar(height: topBarHeight))
+        overlay.panel.level = overlay.autoHideEligible ? .screenSaver : .statusBar
+        overlay.view.configure(.attachedBar(height: topBarHeight, showsPin: overlay.autoHideEligible))
 
         let maxWidth = max(260, screen.frame.width - 120)
         let targetSize = overlay.view.fittingSize(constrainedTo: maxWidth)
@@ -128,8 +166,75 @@ final class IslandWindowController {
         let height = targetSize.height
         let x = screen.frame.midX - width / 2
         let y = screen.frame.maxY - height
-        overlay.panel.setFrame(NSRect(x: x, y: y, width: width, height: height), display: true)
+        let visibleFrame = NSRect(x: x, y: y, width: width, height: height)
+        overlay.visibleFrame = visibleFrame
+
+        guard overlay.isCollapsed else { return visibleFrame }
+        return NSRect(x: x, y: screen.frame.maxY, width: width, height: height)
     }
+
+    private func startHoverTracking() {
+        hoverTimer?.invalidate()
+        let timer = Timer(timeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.updateHoverState(animated: true)
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        hoverTimer = timer
+    }
+
+    private func updateHoverState(animated: Bool) {
+        let mouseLocation = NSEvent.mouseLocation
+        for overlay in overlays {
+            let isHovered = isMouseHovering(overlay, at: mouseLocation)
+            if overlay.isHovered != isHovered {
+                overlay.isHovered = isHovered
+                overlay.view.setHovering(isHovered)
+                overlay.panel.ignoresMouseEvents = !isHovered
+            }
+
+            let shouldCollapse = shouldCollapse(overlay)
+            guard overlay.isCollapsed != shouldCollapse else { continue }
+            overlay.isCollapsed = shouldCollapse
+            position(overlay, animated: animated)
+        }
+    }
+
+    private func shouldCollapse(_ overlay: ScreenOverlay) -> Bool {
+        overlay.autoHideEligible && !preferences.isPinned && !overlay.isHovered
+    }
+
+    private func isMouseHovering(_ overlay: ScreenOverlay, at point: NSPoint) -> Bool {
+        guard overlay.autoHideEligible else { return false }
+        if overlay.panel.frame.insetBy(dx: -8, dy: -8).contains(point) {
+            return true
+        }
+
+        let visibleFrame = overlay.visibleFrame.isEmpty ? overlay.panel.frame : overlay.visibleFrame
+        let revealWidth = max(visibleFrame.width + 32, 220)
+        let revealZone = NSRect(
+            x: visibleFrame.midX - revealWidth / 2,
+            y: overlay.screen.frame.maxY - Self.revealZoneHeight,
+            width: revealWidth,
+            height: Self.revealZoneHeight + 2)
+        return revealZone.contains(point)
+    }
+
+    private func togglePinned() {
+        preferences.isPinned = !preferences.isPinned
+        for overlay in overlays {
+            overlay.view.setPinned(preferences.isPinned)
+        }
+        updateHoverState(animated: true)
+    }
+
+    private var autoHideAnimationDuration: TimeInterval {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : Self.menuBarAutoHideAnimationDuration
+    }
+
+    private static let menuBarAutoHideAnimationDuration: TimeInterval = 0.26
+    private static let revealZoneHeight: CGFloat = 10
 }
 
 @MainActor
@@ -137,9 +242,15 @@ final class ScreenOverlay {
     let screen: NSScreen
     let panel: NSPanel
     let view: IslandView
+    let autoHideEligible: Bool
+    var isHovered = false
+    var isCollapsed = false
+    var visibleFrame = NSRect.zero
+    var lastTargetFrame = NSRect.zero
 
-    init(screen: NSScreen) {
+    init(screen: NSScreen, autoHideEligible: Bool) {
         self.screen = screen
+        self.autoHideEligible = autoHideEligible
         self.view = IslandView(frame: NSRect(x: 0, y: 0, width: 760, height: 24))
         self.panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 760, height: 24),
@@ -152,6 +263,7 @@ final class ScreenOverlay {
         panel.hasShadow = false
         panel.level = .statusBar
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        panel.acceptsMouseMovedEvents = true
         panel.ignoresMouseEvents = true
         panel.contentView = view
     }
@@ -159,7 +271,7 @@ final class ScreenOverlay {
 
 final class IslandView: NSView {
     enum Style {
-        case attachedBar(height: CGFloat)
+        case attachedBar(height: CGFloat, showsPin: Bool)
         case notch(height: CGFloat, gapWidth: CGFloat)
     }
 
@@ -168,13 +280,17 @@ final class IslandView: NSView {
     private let quotaLabel = NSTextField(labelWithString: "")
     private let usageLabel = NSTextField(labelWithString: "")
     private let statusDotView = PulsingDotView()
+    private let pinButton = PinButton()
     private var horizontalPadding: CGFloat = 0
     private var notchInnerPadding: CGFloat = 0
     private var notchHeight: CGFloat = 24
     private(set) var notchGapWidth: CGFloat = 0
     private(set) var notchLeftLaneWidth: CGFloat = 0
     private var isRefreshing = false
-    private var style: Style = .attachedBar(height: 32)
+    private var showsPin = false
+    private var isHovering = false
+    private var style: Style = .attachedBar(height: 32, showsPin: false)
+    var onPinToggle: (() -> Void)?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -198,7 +314,10 @@ final class IslandView: NSView {
         addSubview(quotaLabel)
         addSubview(usageLabel)
         addSubview(statusDotView)
+        addSubview(pinButton)
         statusDotView.setRefreshing(false)
+        pinButton.target = self
+        pinButton.action = #selector(pinButtonPressed)
 
         let menu = NSMenu()
         let quitItem = NSMenuItem(title: "Quit AgentBar", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
@@ -253,15 +372,27 @@ final class IslandView: NSView {
         needsLayout = true
     }
 
+    func setPinned(_ isPinned: Bool) {
+        pinButton.setPinned(isPinned)
+    }
+
+    func setHovering(_ hovering: Bool) {
+        guard hovering != isHovering else { return }
+        isHovering = hovering
+    }
+
     func configure(_ style: Style) {
         self.style = style
         switch style {
-        case let .attachedBar(height):
+        case let .attachedBar(height, showsPin):
             horizontalPadding = 18
             notchInnerPadding = 0
             notchHeight = height
             notchGapWidth = 0
             notchLeftLaneWidth = 0
+            self.showsPin = showsPin
+            pinButton.isHidden = !showsPin
+            pinButton.alphaValue = showsPin ? 1 : 0
             layer?.backgroundColor = NSColor.clear.cgColor
             layer?.cornerRadius = 0
             fullLabel.lineBreakMode = .byClipping
@@ -273,6 +404,9 @@ final class IslandView: NSView {
             notchInnerPadding = 2
             notchHeight = max(24, height)
             notchGapWidth = gapWidth
+            showsPin = false
+            pinButton.isHidden = true
+            pinButton.alphaValue = 0
             layer?.backgroundColor = NSColor.clear.cgColor
             layer?.cornerRadius = 0
             quotaLabel.lineBreakMode = .byClipping
@@ -287,11 +421,11 @@ final class IslandView: NSView {
 
     func fittingSize(constrainedTo maxWidth: CGFloat) -> NSSize {
         switch style {
-        case let .attachedBar(height):
+        case let .attachedBar(height, _):
             let iconGap: CGFloat = 8
             let labelSafety: CGFloat = 28
             let statusWidth = refreshingStatusWidth
-            let fixedWidth = horizontalPadding * 2 + iconViewSize.width + iconGap + statusWidth
+            let fixedWidth = horizontalPadding * 2 + iconViewSize.width + iconGap + statusWidth + pinSlotWidth
             let labelWidth = min(
                 fullLabel.intrinsicContentSize.width + labelSafety,
                 max(0, maxWidth - fixedWidth))
@@ -321,10 +455,11 @@ final class IslandView: NSView {
         let iconGap: CGFloat = 8
         let labelSafety: CGFloat = 28
         let statusWidth = refreshingStatusWidth
+        let pinWidth = pinSlotWidth
         let labelWidth = min(
             fullLabel.intrinsicContentSize.width + labelSafety,
-            max(0, bounds.width - horizontalPadding * 2 - iconViewSize.width - iconGap - statusWidth))
-        let totalWidth = iconViewSize.width + iconGap + labelWidth + statusWidth
+            max(0, bounds.width - horizontalPadding * 2 - iconViewSize.width - iconGap - statusWidth - pinWidth))
+        let totalWidth = iconViewSize.width + iconGap + labelWidth + statusWidth + pinWidth
         let startX = max(horizontalPadding, floor((bounds.width - totalWidth) / 2))
 
         iconView.frame = NSRect(x: startX, y: iconY, width: iconViewSize.width, height: iconViewSize.height)
@@ -334,10 +469,13 @@ final class IslandView: NSView {
             width: labelWidth,
             height: textHeight)
         layoutStatusDot(after: fullLabel.frame.maxX, centerY: centerY)
+        let pinAnchorX = isRefreshing ? statusDotView.frame.maxX : fullLabel.frame.maxX
+        layoutPinButton(after: pinAnchorX, centerY: centerY)
     }
 
     private func layoutNotch() {
         iconView.isHidden = false
+        pinButton.frame = .zero
 
         let textHeight = ceil(max(quotaLabel.intrinsicContentSize.height, usageLabel.intrinsicContentSize.height))
         let centerY = bounds.midY
@@ -383,6 +521,24 @@ final class IslandView: NSView {
             y: floor(centerY - size / 2),
             width: size,
             height: size)
+    }
+
+    private func layoutPinButton(after x: CGFloat, centerY: CGFloat) {
+        guard showsPin else {
+            pinButton.frame = .zero
+            return
+        }
+
+        let size = Self.pinButtonSize
+        pinButton.frame = NSRect(
+            x: x + Self.pinButtonGap,
+            y: floor(centerY - size.height / 2),
+            width: size.width,
+            height: size.height)
+    }
+
+    @objc private func pinButtonPressed() {
+        onPinToggle?()
     }
 
     private static func split(_ text: String) -> (sessionPercent: String, weeklyPercent: String) {
@@ -527,10 +683,53 @@ final class IslandView: NSView {
         isRefreshing ? Self.statusDotSize + Self.statusDotGap : 0
     }
 
+    private var pinSlotWidth: CGFloat {
+        showsPin ? Self.pinButtonSize.width + Self.pinButtonGap : 0
+    }
+
     private static let iconViewSize = NSSize(width: 16, height: 16)
+    private static let pinButtonSize = NSSize(width: 18, height: 18)
+    private static let pinButtonGap: CGFloat = 8
     private static let labelFont = NSFont.monospacedSystemFont(ofSize: 11, weight: .semibold)
     private static let statusDotSize: CGFloat = 5
     private static let statusDotGap: CGFloat = 8
+}
+
+final class PinButton: NSButton {
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        isBordered = false
+        imagePosition = .imageOnly
+        setButtonType(.momentaryChange)
+        focusRingType = .none
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
+        setPinned(false)
+    }
+
+    @available(*, unavailable)
+    required init?(coder _: NSCoder) {
+        nil
+    }
+
+    override var acceptsFirstResponder: Bool {
+        false
+    }
+
+    func setPinned(_ pinned: Bool) {
+        state = pinned ? .on : .off
+        toolTip = pinned ? "Pinned open" : "Auto hide"
+        contentTintColor = pinned ? NSColor.white : NSColor.white.withAlphaComponent(0.72)
+        layer?.backgroundColor = NSColor.clear.cgColor
+
+        let symbolName = pinned ? "pin.fill" : "pin"
+        let configuration = NSImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
+        let symbol = NSImage(
+            systemSymbolName: symbolName,
+            accessibilityDescription: pinned ? "Pinned open" : "Auto hide")
+        symbol?.isTemplate = true
+        image = symbol?.withSymbolConfiguration(configuration)
+    }
 }
 
 final class PulsingDotView: NSView {
@@ -577,6 +776,24 @@ final class PulsingDotView: NSView {
     }
 }
 
+final class AgentBarPreferences {
+    private let defaults: UserDefaults
+    private let pinnedKey = "AgentBar.pinnedOpen"
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+    }
+
+    var isPinned: Bool {
+        get {
+            defaults.bool(forKey: pinnedKey)
+        }
+        set {
+            defaults.set(newValue, forKey: pinnedKey)
+        }
+    }
+}
+
 private extension NSScreen {
     var agentBarTopBarHeight: CGFloat {
         let visibleTopInset = max(0, frame.maxY - visibleFrame.maxY)
@@ -603,5 +820,9 @@ private extension NSScreen {
         let width = rawWidth + 4
         guard width > 0, height > 0 else { return nil }
         return NSRect(x: left.maxX - 2, y: frame.maxY - height, width: width, height: height)
+    }
+
+    var agentBarSupportsAutoHide: Bool {
+        agentBarNotchFrame == nil
     }
 }
