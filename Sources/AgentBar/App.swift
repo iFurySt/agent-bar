@@ -77,12 +77,12 @@ final class IslandWindowController {
     private func refresh() async {
         let quickRateLimits = await snapshotService.quickRateLimits()
         currentText = AgentBarDisplayFormatting.line(snapshot: AgentBarSnapshot(rateLimits: quickRateLimits, costs: currentCosts))
-        updateOverlays()
+        updateOverlays(animated: true)
 
         let snapshot = await snapshotService.snapshot()
         currentCosts = snapshot.costs
         currentText = AgentBarDisplayFormatting.line(snapshot: snapshot)
-        updateOverlays()
+        updateOverlays(animated: true)
     }
 
     private func rebuildOverlays() {
@@ -95,7 +95,7 @@ final class IslandWindowController {
             overlay.view.onPinToggle = { [weak self] in
                 self?.togglePinned()
             }
-            overlay.view.update(text: currentText)
+            overlay.view.update(text: currentText, animated: false)
             overlay.view.setPinned(preferences.isPinned)
             overlay.isHovered = isMouseHovering(overlay, at: mouseLocation)
             overlay.isCollapsed = shouldCollapse(overlay)
@@ -108,16 +108,19 @@ final class IslandWindowController {
         updateHoverState(animated: false)
     }
 
-    private func updateOverlays() {
+    private func updateOverlays(animated: Bool = false) {
         for overlay in overlays {
-            overlay.view.update(text: currentText)
+            let textChanged = overlay.view.update(text: currentText, animated: animated)
             overlay.view.setPinned(preferences.isPinned)
-            position(overlay, animated: false)
+            position(
+                overlay,
+                animated: animated && textChanged,
+                duration: contentUpdateAnimationDuration)
         }
         updateHoverState(animated: false)
     }
 
-    private func position(_ overlay: ScreenOverlay, animated: Bool) {
+    private func position(_ overlay: ScreenOverlay, animated: Bool, duration: TimeInterval? = nil) {
         let targetFrame = targetFrame(for: overlay)
         guard overlay.lastTargetFrame != targetFrame else { return }
         overlay.lastTargetFrame = targetFrame
@@ -125,13 +128,14 @@ final class IslandWindowController {
         let updates = {
             overlay.panel.setFrame(targetFrame, display: true)
         }
-        guard animated, autoHideAnimationDuration > 0 else {
+        let animationDuration = duration ?? autoHideAnimationDuration
+        guard animated, animationDuration > 0 else {
             updates()
             return
         }
 
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = autoHideAnimationDuration
+            context.duration = animationDuration
             context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
             overlay.panel.animator().setFrame(targetFrame, display: true)
         }
@@ -231,7 +235,12 @@ final class IslandWindowController {
         NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : Self.menuBarAutoHideAnimationDuration
     }
 
+    private var contentUpdateAnimationDuration: TimeInterval {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : Self.contentUpdateAnimationDuration
+    }
+
     private static let menuBarAutoHideAnimationDuration: TimeInterval = 0.26
+    private static let contentUpdateAnimationDuration: TimeInterval = 0.44
     private static let revealZoneHeight: CGFloat = 10
 }
 
@@ -274,9 +283,9 @@ final class IslandView: NSView {
     }
 
     private let iconView = NSImageView()
-    private let fullLabel = NSTextField(labelWithString: "")
-    private let quotaLabel = NSTextField(labelWithString: "")
-    private let usageLabel = NSTextField(labelWithString: "")
+    private let fullLabel = RollingTextLabel()
+    private let quotaLabel = RollingTextLabel()
+    private let usageLabel = RollingTextLabel()
     private let pinButton = PinButton()
     private var horizontalPadding: CGFloat = 0
     private var notchInnerPadding: CGFloat = 0
@@ -356,12 +365,20 @@ final class IslandView: NSView {
         nil
     }
 
-    func update(text: String) {
+    @discardableResult
+    func update(text: String, animated: Bool) -> Bool {
         let segments = Self.split(text)
-        fullLabel.attributedStringValue = Self.styledFullText(text)
-        quotaLabel.attributedStringValue = Self.styledPercentText(segments.sessionPercent)
-        usageLabel.attributedStringValue = Self.styledPercentText(segments.weeklyPercent)
+        let fullText = Self.styledFullText(text)
+        let quotaText = Self.styledPercentText(segments.sessionPercent)
+        let usageText = Self.styledPercentText(segments.weeklyPercent)
+        let textChanged = fullLabel.stringValue != fullText.string ||
+            quotaLabel.stringValue != quotaText.string ||
+            usageLabel.stringValue != usageText.string
+        fullLabel.setAttributedStringValue(fullText, animated: animated)
+        quotaLabel.setAttributedStringValue(quotaText, animated: animated)
+        usageLabel.setAttributedStringValue(usageText, animated: animated)
         needsLayout = true
+        return textChanged
     }
 
     func setPinned(_ isPinned: Bool) {
@@ -659,6 +676,217 @@ final class IslandView: NSView {
     private static let pinButtonSize = NSSize(width: 18, height: 18)
     private static let pinButtonGap: CGFloat = 8
     private static let labelFont = NSFont.monospacedSystemFont(ofSize: 11, weight: .semibold)
+}
+
+final class RollingTextLabel: NSView {
+    var font = NSFont.systemFont(ofSize: NSFont.systemFontSize) {
+        didSet {
+            invalidateIntrinsicContentSize()
+            needsDisplay = true
+        }
+    }
+
+    var textColor = NSColor.labelColor {
+        didSet {
+            needsDisplay = true
+        }
+    }
+
+    var lineBreakMode: NSLineBreakMode = .byClipping
+    var maximumNumberOfLines = 1
+
+    private var currentValue = NSAttributedString(string: "")
+    private var textAnimation: TextAnimation?
+    private var animationTimer: Timer?
+
+    override var isFlipped: Bool {
+        true
+    }
+
+    var stringValue: String {
+        currentValue.string
+    }
+
+    var attributedStringValue: NSAttributedString {
+        get { currentValue }
+        set { setAttributedStringValue(newValue, animated: false) }
+    }
+
+    override var intrinsicContentSize: NSSize {
+        let size = currentValue.size()
+        return NSSize(width: ceil(size.width), height: ceil(size.height))
+    }
+
+    func setAttributedStringValue(_ value: NSAttributedString, animated: Bool) {
+        let previousValue = currentValue
+        let previousString = previousValue.string
+        currentValue = value
+        invalidateIntrinsicContentSize()
+
+        let shouldAnimate = animated &&
+            !previousString.isEmpty &&
+            previousString != value.string &&
+            !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        guard shouldAnimate else {
+            textAnimation = nil
+            stopAnimationTimer()
+            needsDisplay = true
+            return
+        }
+
+        textAnimation = TextAnimation(
+            previousValue: previousValue,
+            currentValue: value,
+            startTime: CACurrentMediaTime(),
+            duration: Self.animationDuration)
+        startAnimationTimer()
+        needsDisplay = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard !currentValue.string.isEmpty else { return }
+
+        NSGraphicsContext.saveGraphicsState()
+        NSBezierPath(rect: bounds).addClip()
+        if let textAnimation, textAnimation.isActive {
+            drawAnimated(textAnimation)
+        } else {
+            textAnimation = nil
+            draw(currentValue, at: CGPoint(x: 0, y: baselineY(for: currentValue)))
+        }
+        NSGraphicsContext.restoreGraphicsState()
+    }
+
+    private func drawAnimated(_ animation: TextAnimation) {
+        let rawProgress = min(1, max(0, (CACurrentMediaTime() - animation.startTime) / animation.duration))
+        let progress = Self.easeInOut(rawProgress)
+        let previousGlyphs = Self.glyphs(from: animation.previousValue)
+        let currentGlyphs = Self.glyphs(from: animation.currentValue)
+        let textHeight = ceil(max(animation.previousValue.size().height, animation.currentValue.size().height))
+        let baseY = floor(max(0, (bounds.height - textHeight) / 2))
+        var x: CGFloat = 0
+
+        for (index, glyph) in currentGlyphs.enumerated() {
+            let previousGlyph = previousGlyphs.indices.contains(index) ? previousGlyphs[index] : nil
+            let rollsDigit = glyph.isDigit && previousGlyph?.text != glyph.text
+            guard rollsDigit else {
+                draw(glyph.attributedValue, at: CGPoint(x: x, y: baseY))
+                x += glyph.width
+                continue
+            }
+
+            let cellWidth = max(glyph.width, previousGlyph?.width ?? glyph.width)
+            let clipRect = NSRect(x: x, y: baseY, width: cellWidth, height: textHeight)
+            NSGraphicsContext.saveGraphicsState()
+            NSBezierPath(rect: clipRect).addClip()
+
+            if let previousGlyph, previousGlyph.isDigit {
+                draw(
+                    previousGlyph.attributedValue,
+                    at: CGPoint(x: x, y: baseY - progress * textHeight),
+                    alpha: 1 - progress)
+            }
+            draw(
+                glyph.attributedValue,
+                at: CGPoint(x: x, y: baseY + (1 - progress) * textHeight),
+                alpha: max(0.2, progress))
+
+            NSGraphicsContext.restoreGraphicsState()
+            x += glyph.width
+        }
+    }
+
+    private func baselineY(for value: NSAttributedString) -> CGFloat {
+        let height = ceil(value.size().height)
+        return floor(max(0, (bounds.height - height) / 2))
+    }
+
+    private func draw(_ value: NSAttributedString, at point: CGPoint, alpha: CGFloat = 1) {
+        guard alpha < 1 else {
+            value.draw(at: point)
+            return
+        }
+
+        guard let context = NSGraphicsContext.current?.cgContext else {
+            value.draw(at: point)
+            return
+        }
+        context.saveGState()
+        context.setAlpha(alpha)
+        value.draw(at: point)
+        context.restoreGState()
+    }
+
+    private func startAnimationTimer() {
+        animationTimer?.invalidate()
+        let timer = Timer(
+            timeInterval: 1.0 / 60.0,
+            target: self,
+            selector: #selector(animationTimerDidFire(_:)),
+            userInfo: nil,
+            repeats: true)
+        RunLoop.main.add(timer, forMode: .common)
+        animationTimer = timer
+    }
+
+    @objc private func animationTimerDidFire(_: Timer) {
+        if let textAnimation, !textAnimation.isActive {
+            self.textAnimation = nil
+            stopAnimationTimer()
+        }
+        needsDisplay = true
+    }
+
+    private func stopAnimationTimer() {
+        animationTimer?.invalidate()
+        animationTimer = nil
+    }
+
+    private static func glyphs(from value: NSAttributedString) -> [Glyph] {
+        let string = value.string as NSString
+        var glyphs: [Glyph] = []
+        var location = 0
+        while location < string.length {
+            let range = string.rangeOfComposedCharacterSequence(at: location)
+            let attributedValue = value.attributedSubstring(from: range)
+            let text = string.substring(with: range)
+            glyphs.append(Glyph(
+                text: text,
+                attributedValue: attributedValue,
+                width: ceil(attributedValue.size().width)))
+            location = range.location + range.length
+        }
+        return glyphs
+    }
+
+    private static func easeInOut(_ progress: Double) -> CGFloat {
+        let clamped = min(1, max(0, progress))
+        return CGFloat(clamped * clamped * (3 - 2 * clamped))
+    }
+
+    private struct TextAnimation {
+        let previousValue: NSAttributedString
+        let currentValue: NSAttributedString
+        let startTime: CFTimeInterval
+        let duration: TimeInterval
+
+        var isActive: Bool {
+            CACurrentMediaTime() - startTime < duration
+        }
+    }
+
+    private struct Glyph {
+        let text: String
+        let attributedValue: NSAttributedString
+        let width: CGFloat
+
+        var isDigit: Bool {
+            text.unicodeScalars.allSatisfy { CharacterSet.decimalDigits.contains($0) }
+        }
+    }
+
+    private static let animationDuration: TimeInterval = 0.46
 }
 
 final class PinButton: NSButton {
