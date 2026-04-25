@@ -152,8 +152,18 @@ final class IslandWindowController {
             overlay.view.onSettingsOpen = { [weak self] anchor in
                 self?.toggleSettings(relativeTo: anchor)
             }
+            overlay.view.onExpansionToggle = { [weak self, weak overlay] in
+                guard let self, let overlay else { return }
+                overlay.isExpanded.toggle()
+                overlay.view.setExpanded(overlay.isExpanded)
+                self.position(
+                    overlay,
+                    animated: true,
+                    duration: self.paperPullAnimationDuration)
+            }
             overlay.view.update(text: currentText, animated: false)
             overlay.view.setPinned(preferences.isPinned)
+            overlay.view.setExpanded(overlay.isExpanded)
             overlay.isHovered = isMouseHovering(overlay, at: mouseLocation)
             overlay.isCollapsed = shouldCollapse(overlay)
             overlay.view.setHovering(overlay.isHovered)
@@ -169,6 +179,7 @@ final class IslandWindowController {
         for overlay in overlays {
             let textChanged = overlay.view.update(text: currentText, animated: animated)
             overlay.view.setPinned(preferences.isPinned)
+            overlay.view.setExpanded(overlay.isExpanded)
             position(
                 overlay,
                 animated: animated && textChanged,
@@ -337,8 +348,13 @@ final class IslandWindowController {
         NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : Self.contentUpdateAnimationDuration
     }
 
+    private var paperPullAnimationDuration: TimeInterval {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : Self.paperPullAnimationDuration
+    }
+
     private static let menuBarAutoHideAnimationDuration: TimeInterval = 0.26
     private static let contentUpdateAnimationDuration: TimeInterval = 0.44
+    private static let paperPullAnimationDuration: TimeInterval = 0.32
     private static let revealZoneHeight: CGFloat = 10
 }
 
@@ -350,6 +366,7 @@ final class ScreenOverlay {
     let autoHideEligible: Bool
     var isHovered = false
     var isCollapsed = false
+    var isExpanded = false
     var visibleFrame = NSRect.zero
     var lastTargetFrame = NSRect.zero
 
@@ -395,9 +412,11 @@ final class IslandView: NSView {
     private var showsSettings = false
     private var isHovering = false
     private var controlsVisible = false
+    private var isExpanded = false
     private var style: Style = .attachedBar(height: 32, showsPin: false)
     var onPinToggle: (() -> Void)?
     var onSettingsOpen: ((NSView) -> Void)?
+    var onExpansionToggle: (() -> Void)?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -458,9 +477,12 @@ final class IslandView: NSView {
         switch style {
         case .attachedBar, .notch:
             context.saveGState()
-            context.addPath(Self.topAttachedIslandPath(in: bounds))
+            context.addPath(Self.paperPullIslandPath(in: bounds, topHeight: notchHeight, expanded: isExpanded))
             context.setFillColor(NSColor.black.cgColor)
             context.fillPath()
+            if isExpanded {
+                Self.drawPaperPullDetails(in: bounds, topHeight: notchHeight, context: context)
+            }
             context.restoreGState()
         }
     }
@@ -494,6 +516,14 @@ final class IslandView: NSView {
         guard hovering != isHovering else { return }
         isHovering = hovering
         scheduleControlVisibility(forHovering: hovering)
+        needsLayout = true
+    }
+
+    func setExpanded(_ expanded: Bool) {
+        guard expanded != isExpanded else { return }
+        isExpanded = expanded
+        updateControlVisibility()
+        needsDisplay = true
         needsLayout = true
     }
 
@@ -547,7 +577,7 @@ final class IslandView: NSView {
             let labelWidth = min(
                 fullLabel.intrinsicContentSize.width + labelSafety,
                 max(0, maxWidth - fixedWidth))
-            return NSSize(width: fixedWidth + labelWidth, height: height)
+            return NSSize(width: fixedWidth + labelWidth, height: height + paperPullHeight)
         case .notch:
             let iconWidth = iconViewSize.width
             let iconGap: CGFloat = 8
@@ -558,7 +588,7 @@ final class IslandView: NSView {
             let rightWidth = ceil(notchInnerPadding + rightContentWidth + labelSafety + horizontalPadding)
             notchLeftLaneWidth = leftWidth
             let width = min(maxWidth, leftWidth + notchGapWidth + rightWidth)
-            return NSSize(width: width, height: notchHeight)
+            return NSSize(width: width, height: notchHeight + paperPullHeight)
         }
     }
 
@@ -566,7 +596,7 @@ final class IslandView: NSView {
         iconView.isHidden = false
 
         let textHeight = ceil(fullLabel.intrinsicContentSize.height)
-        let centerY = bounds.midY
+        let centerY = topContentCenterY
         let labelY = floor(centerY - textHeight / 2)
         let iconY = floor(centerY - iconViewSize.height / 2)
         let iconGap: CGFloat = 8
@@ -593,7 +623,7 @@ final class IslandView: NSView {
         settingsButton.frame = .zero
 
         let textHeight = ceil(max(quotaLabel.intrinsicContentSize.height, usageLabel.intrinsicContentSize.height))
-        let centerY = bounds.midY
+        let centerY = topContentCenterY
         let labelY = floor(centerY - textHeight / 2)
         let iconY = floor(centerY - iconViewSize.height / 2)
         let gapStart = notchLeftLaneWidth
@@ -623,7 +653,7 @@ final class IslandView: NSView {
             width: usageFrameWidth,
             height: textHeight)
 
-        guard controlsVisible && (showsPin || showsSettings) else {
+        guard (controlsVisible || isExpanded) && (showsPin || showsSettings) else {
             return
         }
 
@@ -683,8 +713,9 @@ final class IslandView: NSView {
             settingsButton.isHidden = !showsPin
             settingsButton.alphaValue = showsPin ? 1 : 0
         case .notch:
-            let showPinControl = showsPin && controlsVisible
-            let showSettingsControl = showsSettings && controlsVisible
+            let keepsControlsVisible = controlsVisible || isExpanded
+            let showPinControl = showsPin && keepsControlsVisible
+            let showSettingsControl = showsSettings && keepsControlsVisible
             pinButton.isHidden = !showPinControl
             pinButton.alphaValue = showPinControl ? 1 : 0
             settingsButton.isHidden = !showSettingsControl
@@ -720,6 +751,15 @@ final class IslandView: NSView {
 
     @objc private func settingsButtonPressed() {
         onSettingsOpen?(settingsButton)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let location = convert(event.locationInWindow, from: nil)
+        if pinButton.frame.contains(location) || settingsButton.frame.contains(location) {
+            super.mouseDown(with: event)
+            return
+        }
+        onExpansionToggle?()
     }
 
     private static func split(_ text: String) -> (sessionPercent: String, weeklyPercent: String) {
@@ -802,7 +842,7 @@ final class IslandView: NSView {
         return .systemRed
     }
 
-    private static func topAttachedIslandPath(in rect: CGRect) -> CGPath {
+    private static func paperPullIslandPath(in rect: CGRect, topHeight: CGFloat, expanded: Bool) -> CGPath {
         let path = CGMutablePath()
         guard rect.width > 0, rect.height > 0 else { return path }
 
@@ -832,6 +872,30 @@ final class IslandView: NSView {
             control: CGPoint(x: minX + topRadius, y: maxY))
         path.closeSubpath()
         return path
+    }
+
+    private static func drawPaperPullDetails(in rect: CGRect, topHeight: CGFloat, context: CGContext) {
+        let topRadius = min(6, rect.width * 0.25, topHeight * 0.25)
+        let bottomRadius = min(16, topHeight * 0.5, rect.width / 2)
+        let sideXInset = topRadius + 0.5
+        let seamTopY = max(rect.minY + bottomRadius, rect.maxY - topHeight + 3)
+        let seamBottomY = rect.minY + bottomRadius + 2
+        guard seamTopY > seamBottomY else { return }
+
+        context.saveGState()
+        context.setLineWidth(1)
+        context.setStrokeColor(NSColor.white.withAlphaComponent(0.10).cgColor)
+        context.move(to: CGPoint(x: rect.minX + sideXInset, y: seamTopY))
+        context.addLine(to: CGPoint(x: rect.minX + sideXInset, y: seamBottomY))
+        context.move(to: CGPoint(x: rect.maxX - sideXInset, y: seamTopY))
+        context.addLine(to: CGPoint(x: rect.maxX - sideXInset, y: seamBottomY))
+        context.strokePath()
+
+        context.setStrokeColor(NSColor.white.withAlphaComponent(0.08).cgColor)
+        context.move(to: CGPoint(x: rect.minX + topRadius + bottomRadius + 8, y: rect.minY + bottomRadius * 0.55))
+        context.addLine(to: CGPoint(x: rect.maxX - topRadius - bottomRadius - 8, y: rect.minY + bottomRadius * 0.55))
+        context.strokePath()
+        context.restoreGState()
     }
 
     private static func codexIcon() -> NSImage? {
@@ -875,13 +939,22 @@ final class IslandView: NSView {
     }
 
     private var activeActionSlotWidth: CGFloat {
-        isHovering ? actionSlotWidth : 0
+        (isHovering || isExpanded) ? actionSlotWidth : 0
+    }
+
+    private var paperPullHeight: CGFloat {
+        isExpanded ? Self.expandedPullHeight : 0
+    }
+
+    private var topContentCenterY: CGFloat {
+        bounds.maxY - notchHeight / 2
     }
 
     private static let iconViewSize = NSSize(width: 16, height: 16)
     private static let pinButtonSize = NSSize(width: 18, height: 18)
     private static let pinButtonGap: CGFloat = 8
     private static let settingsButtonGap: CGFloat = 6
+    private static let expandedPullHeight: CGFloat = 76
     private static let labelFont = NSFont.monospacedSystemFont(ofSize: 11, weight: .semibold)
 }
 
