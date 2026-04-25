@@ -13,7 +13,7 @@ final class DisplayFormattingTests: XCTestCase {
 
         XCTAssertEqual(
             AgentBarDisplayFormatting.line(snapshot: snapshot),
-            "5h 4%   7d 46%      Today: $114.20 · 293M / ~30 Days: $1,443.43 · 3.3B Tokens")
+            "5h 4%  7d 46%  Today: $114.20 · 293M/~30 Days: $1,443.43 · 3.3B Tokens")
     }
 
     func testTokenFormatting() {

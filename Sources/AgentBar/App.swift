@@ -96,7 +96,7 @@ final class IslandWindowController {
         last30DaysCostUSD: 0,
         last30DaysTokens: 0)
     private var currentAccounts: [CodexAccountUsageSnapshot] = []
-    private var currentText = "5h --%   7d --%      Today: $0.00 \u{00B7} -- / ~30 Days: $0.00 \u{00B7} -- Tokens"
+    private var currentText = "5h --%  7d --%  Today: $0.00 \u{00B7} --/~30 Days: $0.00 \u{00B7} -- Tokens"
 
     init(updater: AgentBarUpdater) {
         self.updater = updater
@@ -251,7 +251,15 @@ final class IslandWindowController {
         let targetSize = overlay.view.fittingSize(constrainedTo: maxWidth)
         let width = min(targetSize.width, maxWidth)
         let height = targetSize.height
-        let x = screen.frame.midX - width / 2
+        let centeredX = screen.frame.midX - width / 2
+        let x: CGFloat
+        if overlay.visibleFrame.isEmpty {
+            x = centeredX
+        } else {
+            x = min(
+                max(overlay.visibleFrame.minX, screen.frame.minX + 60),
+                screen.frame.maxX - width - 60)
+        }
         let y = screen.frame.maxY - height
         let visibleFrame = NSRect(x: x, y: y, width: width, height: height)
         overlay.visibleFrame = visibleFrame
@@ -659,6 +667,9 @@ final class IslandView: NSView {
     func setExpanded(_ expanded: Bool) {
         guard expanded != isExpanded else { return }
         isExpanded = expanded
+        if !expanded, isHovering {
+            controlsVisible = true
+        }
         updateControlVisibility()
         needsDisplay = true
         needsLayout = true
@@ -668,16 +679,14 @@ final class IslandView: NSView {
         self.style = style
         switch style {
         case let .attachedBar(height, showsPin):
-            horizontalPadding = 18
+            horizontalPadding = 14
             notchInnerPadding = 0
             notchHeight = height
             notchGapWidth = 0
             notchLeftLaneWidth = 0
             self.showsPin = showsPin
-            pinButton.isHidden = !showsPin
-            pinButton.alphaValue = showsPin ? 1 : 0
-            settingsButton.isHidden = !showsPin
-            settingsButton.alphaValue = showsPin ? 1 : 0
+            self.showsSettings = showsPin
+            updateControlVisibility()
             layer?.backgroundColor = NSColor.clear.cgColor
             layer?.cornerRadius = 0
             fullLabel.lineBreakMode = .byClipping
@@ -692,7 +701,6 @@ final class IslandView: NSView {
             notchGapWidth = gapWidth
             self.showsPin = showsPin
             self.showsSettings = showsSettings
-            controlsVisible = false
             updateControlVisibility()
             layer?.backgroundColor = NSColor.clear.cgColor
             layer?.cornerRadius = 0
@@ -710,11 +718,10 @@ final class IslandView: NSView {
     func fittingSize(constrainedTo maxWidth: CGFloat) -> NSSize {
         switch style {
         case let .attachedBar(height, _):
-            let iconGap: CGFloat = 8
-            let labelSafety: CGFloat = 28
-            let fixedWidth = horizontalPadding * 2 + iconViewSize.width + iconGap + pinSlotWidth
+            let iconGap: CGFloat = 6
+            let fixedWidth = horizontalPadding * 2 + iconViewSize.width + iconGap + activeActionSlotWidth
             let labelWidth = min(
-                fullLabel.intrinsicContentSize.width + labelSafety,
+                ceil(fullLabel.intrinsicContentSize.width),
                 max(0, maxWidth - fixedWidth))
             return NSSize(width: fixedWidth + labelWidth, height: height + paperPullHeight)
         case .notch:
@@ -722,9 +729,10 @@ final class IslandView: NSView {
             let iconGap: CGFloat = 8
             let labelSafety: CGFloat = 10
             let leftContentWidth = iconWidth + iconGap + ceil(quotaLabel.intrinsicContentSize.width)
-            let rightContentWidth = ceil(usageLabel.intrinsicContentSize.width) + activeActionSlotWidth
+            let rightLabelSafety = activeActionSlotWidth > 0 ? labelSafety : 0
+            let rightContentWidth = ceil(usageLabel.intrinsicContentSize.width) + rightLabelSafety + activeActionSlotWidth
             let leftWidth = ceil(horizontalPadding + leftContentWidth + notchInnerPadding)
-            let rightWidth = ceil(notchInnerPadding + rightContentWidth + labelSafety + horizontalPadding)
+            let rightWidth = ceil(notchInnerPadding + rightContentWidth + horizontalPadding)
             notchLeftLaneWidth = leftWidth
             let width = min(maxWidth, leftWidth + notchGapWidth + rightWidth)
             return NSSize(width: width, height: notchHeight + paperPullHeight)
@@ -739,14 +747,12 @@ final class IslandView: NSView {
         let centerY = topContentCenterY
         let labelY = floor(centerY - textHeight / 2)
         let iconY = floor(centerY - iconViewSize.height / 2)
-        let iconGap: CGFloat = 8
-        let labelSafety: CGFloat = 28
-        let pinWidth = pinSlotWidth
+        let iconGap: CGFloat = 6
+        let availableLabelWidth = max(0, bounds.width - horizontalPadding * 2 - iconViewSize.width - iconGap)
         let labelWidth = min(
-            fullLabel.intrinsicContentSize.width + labelSafety,
-            max(0, bounds.width - horizontalPadding * 2 - iconViewSize.width - iconGap - pinWidth))
-        let totalWidth = iconViewSize.width + iconGap + labelWidth + pinWidth
-        let startX = max(horizontalPadding, floor((bounds.width - totalWidth) / 2))
+            ceil(fullLabel.intrinsicContentSize.width),
+            availableLabelWidth)
+        let startX = horizontalPadding
 
         iconView.frame = NSRect(x: startX, y: iconY, width: iconViewSize.width, height: iconViewSize.height)
         fullLabel.frame = NSRect(
@@ -788,7 +794,7 @@ final class IslandView: NSView {
 
         let usageWidth = ceil(usageLabel.intrinsicContentSize.width)
         let usageX = gapEnd + notchInnerPadding
-        let usageFrameWidth = usageWidth + labelSafety
+        let usageFrameWidth = usageWidth + (activeActionSlotWidth > 0 ? labelSafety : 0)
         usageLabel.frame = NSRect(
             x: usageX,
             y: labelY,
@@ -845,50 +851,51 @@ final class IslandView: NSView {
     }
 
     private func layoutPinButton(after x: CGFloat, centerY: CGFloat) {
-        guard showsPin else {
+        guard (controlsVisible || isExpanded) && (showsPin || showsSettings) else {
             pinButton.frame = .zero
             settingsButton.frame = .zero
             return
         }
 
         let size = Self.pinButtonSize
-        pinButton.frame = NSRect(
-            x: x + Self.pinButtonGap,
-            y: floor(centerY - size.height / 2),
-            width: size.width,
-            height: size.height)
-        settingsButton.frame = NSRect(
-            x: pinButton.frame.maxX + Self.settingsButtonGap,
-            y: pinButton.frame.minY,
-            width: size.width,
-            height: size.height)
+        let buttonY = floor(centerY - size.height / 2)
+
+        switch (showsPin, showsSettings) {
+        case (true, true):
+            pinButton.frame = NSRect(
+                x: x + Self.pinButtonGap,
+                y: buttonY,
+                width: size.width,
+                height: size.height)
+            settingsButton.frame = NSRect(
+                x: pinButton.frame.maxX + Self.settingsButtonGap,
+                y: buttonY,
+                width: size.width,
+                height: size.height)
+        case (false, true):
+            pinButton.frame = .zero
+            settingsButton.frame = NSRect(
+                x: x + Self.pinButtonGap,
+                y: buttonY,
+                width: size.width,
+                height: size.height)
+        default:
+            pinButton.frame = .zero
+            settingsButton.frame = .zero
+        }
     }
 
     private func updateControlVisibility() {
-        switch style {
-        case .attachedBar:
-            pinButton.isHidden = !showsPin
-            pinButton.alphaValue = showsPin ? 1 : 0
-            settingsButton.isHidden = !showsPin
-            settingsButton.alphaValue = showsPin ? 1 : 0
-        case .notch:
-            let keepsControlsVisible = controlsVisible || isExpanded
-            let showPinControl = showsPin && keepsControlsVisible
-            let showSettingsControl = showsSettings && keepsControlsVisible
-            pinButton.isHidden = !showPinControl
-            pinButton.alphaValue = showPinControl ? 1 : 0
-            settingsButton.isHidden = !showSettingsControl
-            settingsButton.alphaValue = showSettingsControl ? 1 : 0
-        }
+        let keepsControlsVisible = controlsVisible || isExpanded
+        let showPinControl = showsPin && keepsControlsVisible
+        let showSettingsControl = showsSettings && keepsControlsVisible
+        pinButton.isHidden = !showPinControl
+        pinButton.alphaValue = showPinControl ? 1 : 0
+        settingsButton.isHidden = !showSettingsControl
+        settingsButton.alphaValue = showSettingsControl ? 1 : 0
     }
 
     private func scheduleControlVisibility(forHovering hovering: Bool) {
-        guard case .notch = style else {
-            controlsVisible = hovering
-            updateControlVisibility()
-            return
-        }
-
         guard hovering else {
             controlsVisible = false
             updateControlVisibility()
@@ -1118,8 +1125,8 @@ final class IslandView: NSView {
 
     private static let iconViewSize = NSSize(width: 16, height: 16)
     private static let pinButtonSize = NSSize(width: 18, height: 18)
-    private static let pinButtonGap: CGFloat = 8
-    private static let settingsButtonGap: CGFloat = 6
+    private static let pinButtonGap: CGFloat = 6
+    private static let settingsButtonGap: CGFloat = 5
     private static let maxExpandedAccounts = 4
     private static let labelFont = NSFont.monospacedSystemFont(ofSize: 11, weight: .semibold)
 }
