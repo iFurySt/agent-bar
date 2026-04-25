@@ -10,8 +10,8 @@ fileprivate enum SettingsPage {
 final class AgentBarSettingsWindowController: NSWindowController, NSWindowDelegate {
     var onClose: (() -> Void)?
 
-    init(updater: AgentBarUpdater) {
-        let contentViewController = AgentBarSettingsViewController(updater: updater)
+    init(updater: AgentBarUpdater, preferences: AgentBarPreferences) {
+        let contentViewController = AgentBarSettingsViewController(updater: updater, preferences: preferences)
         let window = AgentBarSettingsWindow(
             contentRect: NSRect(x: 0, y: 0, width: 660, height: 320),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -68,16 +68,20 @@ final class AgentBarSettingsWindow: NSWindow {
 @MainActor
 final class AgentBarSettingsViewController: NSViewController {
     private let updater: AgentBarUpdater
+    private let preferences: AgentBarPreferences
     private let launchAtLogin = AgentBarLaunchAtLoginController()
     private let launchAtLoginSwitch = SettingsSwitch()
     private let automaticUpdatesSwitch = SettingsSwitch()
+    private let autoCollapseStepper = NSStepper()
+    private let autoCollapseValueLabel = NSTextField(labelWithString: "")
     private let sidebar = SettingsSidebarView()
     private let titleLabel = NSTextField(labelWithString: "General")
     private let generalCard = SettingsCardView()
     private let aboutCard = SettingsCardView()
 
-    init(updater: AgentBarUpdater) {
+    init(updater: AgentBarUpdater, preferences: AgentBarPreferences) {
         self.updater = updater
+        self.preferences = preferences
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -102,6 +106,8 @@ final class AgentBarSettingsViewController: NSViewController {
         let launchRow = settingsRow(title: "Launch at Login", control: launchAtLoginSwitch)
         let separator = InsetSeparatorView(inset: 14)
         let updatesRow = settingsRow(title: "Automatic Updates", control: automaticUpdatesSwitch)
+        let separator2 = InsetSeparatorView(inset: 14)
+        let autoCollapseRow = autoCollapseDelayRow()
         let githubRow = SettingsLinkRowView(
             title: "GitHub Repository",
             detail: "github.com/iFurySt/agent-bar")
@@ -110,8 +116,9 @@ final class AgentBarSettingsViewController: NSViewController {
 
         configureSwitch(launchAtLoginSwitch, action: #selector(launchAtLoginChanged(_:)))
         configureSwitch(automaticUpdatesSwitch, action: #selector(automaticUpdatesChanged(_:)))
+        configureAutoCollapseStepper()
 
-        let cardStack = NSStackView(views: [launchRow, separator, updatesRow])
+        let cardStack = NSStackView(views: [launchRow, separator, updatesRow, separator2, autoCollapseRow])
         cardStack.orientation = .vertical
         cardStack.alignment = .leading
         cardStack.spacing = 0
@@ -176,9 +183,13 @@ final class AgentBarSettingsViewController: NSViewController {
             launchRow.widthAnchor.constraint(equalTo: cardStack.widthAnchor),
             separator.widthAnchor.constraint(equalTo: cardStack.widthAnchor),
             updatesRow.widthAnchor.constraint(equalTo: cardStack.widthAnchor),
+            separator2.widthAnchor.constraint(equalTo: cardStack.widthAnchor),
+            autoCollapseRow.widthAnchor.constraint(equalTo: cardStack.widthAnchor),
             launchRow.heightAnchor.constraint(equalToConstant: 40),
             updatesRow.heightAnchor.constraint(equalToConstant: 40),
+            autoCollapseRow.heightAnchor.constraint(equalToConstant: 40),
             separator.heightAnchor.constraint(equalToConstant: 0.5),
+            separator2.heightAnchor.constraint(equalToConstant: 0.5),
             githubRow.widthAnchor.constraint(equalTo: aboutStack.widthAnchor),
             githubRow.heightAnchor.constraint(equalToConstant: 48),
         ])
@@ -225,14 +236,60 @@ final class AgentBarSettingsViewController: NSViewController {
         return rowView
     }
 
+    private func autoCollapseDelayRow() -> NSView {
+        let rowView = NSView()
+        rowView.translatesAutoresizingMaskIntoConstraints = false
+
+        let titleLabel = NSTextField(labelWithString: "Auto Collapse Delay")
+        titleLabel.font = .systemFont(ofSize: 11.8, weight: .regular)
+        titleLabel.textColor = .labelColor
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        autoCollapseValueLabel.font = .monospacedDigitSystemFont(ofSize: 11.8, weight: .medium)
+        autoCollapseValueLabel.textColor = .secondaryLabelColor
+        autoCollapseValueLabel.alignment = .right
+        autoCollapseValueLabel.translatesAutoresizingMaskIntoConstraints = false
+        autoCollapseStepper.translatesAutoresizingMaskIntoConstraints = false
+
+        rowView.addSubview(titleLabel)
+        rowView.addSubview(autoCollapseValueLabel)
+        rowView.addSubview(autoCollapseStepper)
+
+        NSLayoutConstraint.activate([
+            titleLabel.leadingAnchor.constraint(equalTo: rowView.leadingAnchor, constant: 14),
+            titleLabel.centerYAnchor.constraint(equalTo: rowView.centerYAnchor),
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: autoCollapseValueLabel.leadingAnchor, constant: -18),
+
+            autoCollapseStepper.trailingAnchor.constraint(equalTo: rowView.trailingAnchor, constant: -18),
+            autoCollapseStepper.centerYAnchor.constraint(equalTo: rowView.centerYAnchor),
+
+            autoCollapseValueLabel.trailingAnchor.constraint(equalTo: autoCollapseStepper.leadingAnchor, constant: -8),
+            autoCollapseValueLabel.centerYAnchor.constraint(equalTo: rowView.centerYAnchor),
+            autoCollapseValueLabel.widthAnchor.constraint(equalToConstant: 58),
+        ])
+
+        return rowView
+    }
+
     private func configureSwitch(_ control: SettingsSwitch, action: Selector) {
         control.target = self
         control.action = action
     }
 
+    private func configureAutoCollapseStepper() {
+        autoCollapseStepper.minValue = Double(AgentBarPreferences.minExpansionAutoCollapseDelayMilliseconds)
+        autoCollapseStepper.maxValue = Double(AgentBarPreferences.maxExpansionAutoCollapseDelayMilliseconds)
+        autoCollapseStepper.increment = 100
+        autoCollapseStepper.target = self
+        autoCollapseStepper.action = #selector(autoCollapseDelayChanged(_:))
+    }
+
     private func refreshControls() {
         launchAtLoginSwitch.isOn = launchAtLogin.isEnabled
         automaticUpdatesSwitch.isOn = updater.automaticallyChecksForUpdates
+        let delay = preferences.expansionAutoCollapseDelayMilliseconds
+        autoCollapseStepper.doubleValue = Double(delay)
+        autoCollapseValueLabel.stringValue = "\(delay) ms"
     }
 
     @objc private func launchAtLoginChanged(_ sender: SettingsSwitch) {
@@ -246,6 +303,11 @@ final class AgentBarSettingsViewController: NSViewController {
 
     @objc private func automaticUpdatesChanged(_ sender: SettingsSwitch) {
         updater.automaticallyChecksForUpdates = sender.isOn
+        refreshControls()
+    }
+
+    @objc private func autoCollapseDelayChanged(_ sender: NSStepper) {
+        preferences.expansionAutoCollapseDelayMilliseconds = Int(sender.doubleValue)
         refreshControls()
     }
 

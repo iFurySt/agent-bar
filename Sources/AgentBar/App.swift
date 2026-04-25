@@ -166,12 +166,7 @@ final class IslandWindowController {
             }
             overlay.view.onExpansionToggle = { [weak self, weak overlay] in
                 guard let self, let overlay else { return }
-                overlay.isExpanded.toggle()
-                overlay.view.setExpanded(overlay.isExpanded)
-                self.position(
-                    overlay,
-                    animated: true,
-                    duration: self.paperPullAnimationDuration)
+                self.setExpanded(!overlay.isExpanded, for: overlay, animated: true)
             }
             overlay.view.onAccountSwitch = { [weak self] accountID in
                 self?.switchAccount(accountID)
@@ -180,6 +175,7 @@ final class IslandWindowController {
             overlay.view.update(accounts: currentAccounts)
             overlay.view.setPinned(preferences.isPinned)
             overlay.view.setExpanded(overlay.isExpanded)
+            resetExpansionAutoCollapse(for: overlay, at: mouseLocation)
             overlay.isHovered = isMouseHovering(overlay, at: mouseLocation)
             overlay.isCollapsed = shouldCollapse(overlay)
             overlay.view.setHovering(overlay.isHovered)
@@ -286,6 +282,10 @@ final class IslandWindowController {
                 overlay.panel.ignoresMouseEvents = overlay.autoHideEligible ? !isHovered : false
             }
 
+            if updateExpansionAutoCollapse(for: overlay, at: mouseLocation, animated: animated) {
+                continue
+            }
+
             let shouldCollapse = shouldCollapse(overlay)
             if overlay.isCollapsed != shouldCollapse {
                 overlay.isCollapsed = shouldCollapse
@@ -297,6 +297,54 @@ final class IslandWindowController {
                 position(overlay, animated: animated)
             }
         }
+    }
+
+    private func setExpanded(_ expanded: Bool, for overlay: ScreenOverlay, animated: Bool) {
+        guard overlay.isExpanded != expanded else { return }
+        overlay.isExpanded = expanded
+        resetExpansionAutoCollapse(for: overlay, at: NSEvent.mouseLocation)
+        overlay.view.setExpanded(expanded)
+        position(
+            overlay,
+            animated: animated,
+            duration: paperPullAnimationDuration)
+    }
+
+    private func resetExpansionAutoCollapse(for overlay: ScreenOverlay, at mouseLocation: NSPoint) {
+        if overlay.isExpanded, !isMouseInsideExpandedOverlay(overlay, at: mouseLocation) {
+            overlay.expandedMouseExitStartedAt = CACurrentMediaTime()
+        } else {
+            overlay.expandedMouseExitStartedAt = nil
+        }
+    }
+
+    @discardableResult
+    private func updateExpansionAutoCollapse(for overlay: ScreenOverlay, at mouseLocation: NSPoint, animated: Bool) -> Bool {
+        guard overlay.isExpanded else {
+            overlay.expandedMouseExitStartedAt = nil
+            return false
+        }
+
+        if isMouseInsideExpandedOverlay(overlay, at: mouseLocation) {
+            overlay.expandedMouseExitStartedAt = nil
+            return false
+        }
+
+        let now = CACurrentMediaTime()
+        if let exitStartedAt = overlay.expandedMouseExitStartedAt {
+            guard now - exitStartedAt >= preferences.expansionAutoCollapseDelay else {
+                return false
+            }
+            setExpanded(false, for: overlay, animated: animated)
+            return true
+        }
+
+        overlay.expandedMouseExitStartedAt = now
+        return false
+    }
+
+    private func isMouseInsideExpandedOverlay(_ overlay: ScreenOverlay, at point: NSPoint) -> Bool {
+        overlay.panel.frame.insetBy(dx: -8, dy: -8).contains(point)
     }
 
     private func shouldCollapse(_ overlay: ScreenOverlay) -> Bool {
@@ -395,7 +443,7 @@ final class IslandWindowController {
         if let existingController = settingsWindowController {
             controller = existingController
         } else {
-            let newController = AgentBarSettingsWindowController(updater: updater)
+            let newController = AgentBarSettingsWindowController(updater: updater, preferences: preferences)
             newController.onClose = { [weak self] in
                 self?.settingsAnchor = nil
                 NSApp.setActivationPolicy(.accessory)
@@ -443,6 +491,7 @@ final class ScreenOverlay {
     var isHovered = false
     var isCollapsed = false
     var isExpanded = false
+    var expandedMouseExitStartedAt: CFTimeInterval?
     var visibleFrame = NSRect.zero
     var lastTargetFrame = NSRect.zero
 
@@ -1747,6 +1796,10 @@ final class SettingsButton: NSButton {
 final class AgentBarPreferences {
     private let defaults: UserDefaults
     private let pinnedKey = "AgentBar.pinnedOpen"
+    private let expansionAutoCollapseDelayMillisecondsKey = "AgentBar.expansionAutoCollapseDelayMilliseconds"
+    static let defaultExpansionAutoCollapseDelayMilliseconds = 200
+    static let minExpansionAutoCollapseDelayMilliseconds = 100
+    static let maxExpansionAutoCollapseDelayMilliseconds = 5_000
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -1759,6 +1812,26 @@ final class AgentBarPreferences {
         set {
             defaults.set(newValue, forKey: pinnedKey)
         }
+    }
+
+    var expansionAutoCollapseDelay: TimeInterval {
+        TimeInterval(expansionAutoCollapseDelayMilliseconds) / 1_000
+    }
+
+    var expansionAutoCollapseDelayMilliseconds: Int {
+        get {
+            guard defaults.object(forKey: expansionAutoCollapseDelayMillisecondsKey) != nil else {
+                return Self.defaultExpansionAutoCollapseDelayMilliseconds
+            }
+            return Self.clampedExpansionAutoCollapseDelayMilliseconds(defaults.integer(forKey: expansionAutoCollapseDelayMillisecondsKey))
+        }
+        set {
+            defaults.set(Self.clampedExpansionAutoCollapseDelayMilliseconds(newValue), forKey: expansionAutoCollapseDelayMillisecondsKey)
+        }
+    }
+
+    private static func clampedExpansionAutoCollapseDelayMilliseconds(_ value: Int) -> Int {
+        min(max(value, minExpansionAutoCollapseDelayMilliseconds), maxExpansionAutoCollapseDelayMilliseconds)
     }
 }
 
