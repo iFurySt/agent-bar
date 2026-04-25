@@ -14,6 +14,32 @@ public struct CodexCostSnapshot: Codable, Equatable, Sendable {
     }
 }
 
+public struct CodexDailyTokenUsage: Equatable, Sendable {
+    public let day: Date
+    public let dayKey: String
+    public let tokens: Int
+    public let costUSD: Double
+
+    public init(day: Date, dayKey: String, tokens: Int, costUSD: Double) {
+        self.day = day
+        self.dayKey = dayKey
+        self.tokens = tokens
+        self.costUSD = costUSD
+    }
+}
+
+public struct CodexDailyTokenUsageSnapshot: Equatable, Sendable {
+    public let days: [CodexDailyTokenUsage]
+    public let totalTokens: Int
+    public let maxDailyTokens: Int
+
+    public init(days: [CodexDailyTokenUsage]) {
+        self.days = days
+        self.totalTokens = days.reduce(0) { $0 + $1.tokens }
+        self.maxDailyTokens = days.map(\.tokens).max() ?? 0
+    }
+}
+
 public final class CodexCostScanner: @unchecked Sendable {
     private let sessionsRoot: URL
     private let calendar: Calendar
@@ -34,11 +60,125 @@ public final class CodexCostScanner: @unchecked Sendable {
         let since = calendar.date(byAdding: .day, value: -29, to: calendar.startOfDay(for: now)) ?? now
         let sinceKey = Self.dayKey(for: since, calendar: calendar)
         let files = sessionFiles(since: since, through: now)
-        let currentPaths = Set(files.map(\.path))
+        let days = scanDays(files: files, sinceKey: sinceKey, todayKey: todayKey)
+
+        let today = days[todayKey] ?? .zero
+        var last30 = TokenTotals.zero
+        for (_, totals) in days {
+            last30.add(totals)
+        }
+
+        let snapshot = CodexCostSnapshot(
+            todayCostUSD: today.costUSD,
+            todayTokens: today.totalTokens,
+            last30DaysCostUSD: last30.costUSD,
+            last30DaysTokens: last30.totalTokens)
+
+        return snapshot
+    }
+
+    public func dailyTokenUsage(days count: Int = 371, now: Date = Date()) -> CodexDailyTokenUsageSnapshot {
+        let dayCount = max(1, count)
+        let todayStart = calendar.startOfDay(for: now)
+        let since = calendar.date(byAdding: .day, value: -(dayCount - 1), to: todayStart) ?? todayStart
+        let sinceKey = Self.dayKey(for: since, calendar: calendar)
+        let todayKey = Self.dayKey(for: todayStart, calendar: calendar)
+        let files = sessionFiles(since: since, through: now)
+        let totalsByDay = scanDays(files: files, sinceKey: sinceKey, todayKey: todayKey)
+
+        var entries: [CodexDailyTokenUsage] = []
+        var day = since
+        while day <= todayStart {
+            let key = Self.dayKey(for: day, calendar: calendar)
+            let totals = totalsByDay[key] ?? .zero
+            entries.append(CodexDailyTokenUsage(
+                day: day,
+                dayKey: key,
+                tokens: totals.totalTokens,
+                costUSD: totals.costUSD))
+            guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { break }
+            day = next
+        }
+
+        return CodexDailyTokenUsageSnapshot(days: entries)
+    }
+
+    public func yearlyTokenUsage(year: Int, now: Date = Date()) -> CodexDailyTokenUsageSnapshot {
+        var startComponents = DateComponents()
+        startComponents.year = year
+        startComponents.month = 1
+        startComponents.day = 1
+        var endComponents = DateComponents()
+        endComponents.year = year
+        endComponents.month = 12
+        endComponents.day = 31
+
+        guard let yearStart = calendar.date(from: startComponents),
+              let yearEnd = calendar.date(from: endComponents)
+        else {
+            return CodexDailyTokenUsageSnapshot(days: [])
+        }
+
+        let sinceKey = Self.dayKey(for: yearStart, calendar: calendar)
+        let untilKey = Self.dayKey(for: yearEnd, calendar: calendar)
+        let files = sessionFiles(since: yearStart, through: yearEnd)
+        let totalsByDay = scanDays(files: files, sinceKey: sinceKey, todayKey: untilKey)
+
+        var entries: [CodexDailyTokenUsage] = []
+        var day = yearStart
+        while day <= yearEnd {
+            let key = Self.dayKey(for: day, calendar: calendar)
+            let totals = totalsByDay[key] ?? .zero
+            entries.append(CodexDailyTokenUsage(
+                day: day,
+                dayKey: key,
+                tokens: totals.totalTokens,
+                costUSD: totals.costUSD))
+            guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { break }
+            day = next
+        }
+
+        return CodexDailyTokenUsageSnapshot(days: entries)
+    }
+
+    public func usageYearRange(now: Date = Date()) -> ClosedRange<Int> {
+        let currentYear = calendar.component(.year, from: now)
+        var years = Set([currentYear])
+
+        if let cache = cacheStore?.load() {
+            for file in cache.costFiles.values {
+                for (day, models) in file.days {
+                    let hasTokens = models.values.contains { $0.totalTokens > 0 }
+                    if hasTokens, let year = Int(day.prefix(4)) {
+                        years.insert(year)
+                    }
+                }
+            }
+        }
+
+        if let items = try? FileManager.default.contentsOfDirectory(
+            at: sessionsRoot,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles])
+        {
+            for item in items {
+                guard let values = try? item.resourceValues(forKeys: [.isDirectoryKey]),
+                      values.isDirectory == true,
+                      let year = Int(item.lastPathComponent)
+                else { continue }
+                years.insert(year)
+            }
+        }
+
+        let boundedYears = years.filter { $0 <= currentYear }
+        return (boundedYears.min() ?? currentYear)...currentYear
+    }
+
+    private func scanDays(files: [URL], sinceKey: String, todayKey: String) -> [String: TokenTotals] {
         let cache = cacheStore?.load() ?? .empty
         var updatedFiles: [String: CachedCostFile] = [:]
-
         var days: [String: TokenTotals] = [:]
+
         for file in files {
             guard let metadata = CachedFileMetadata(fileURL: file) else { continue }
             let fileDays: [String: [String: TokenTotals]]
@@ -60,30 +200,26 @@ public final class CodexCostScanner: @unchecked Sendable {
             }
         }
 
-        let today = days[todayKey] ?? .zero
-        var last30 = TokenTotals.zero
-        for (_, totals) in days {
-            last30.add(totals)
-        }
-
-        let snapshot = CodexCostSnapshot(
-            todayCostUSD: today.costUSD,
-            todayTokens: today.totalTokens,
-            last30DaysCostUSD: last30.costUSD,
-            last30DaysTokens: last30.totalTokens)
-
         cacheStore?.update { cache in
-            cache.costFiles = cache.costFiles.filter { currentPaths.contains($0.key) }
             for (path, file) in updatedFiles {
                 cache.costFiles[path] = file
             }
         }
 
-        return snapshot
+        return days
     }
 
     private func sessionFiles(since: Date, through now: Date) -> [URL] {
         var files: [URL] = []
+        var seenPaths: Set<String> = []
+
+        func append(_ candidates: [URL]) {
+            for file in candidates where !seenPaths.contains(file.path) {
+                seenPaths.insert(file.path)
+                files.append(file)
+            }
+        }
+
         var day = calendar.startOfDay(for: since)
         let end = calendar.startOfDay(for: now)
 
@@ -94,12 +230,13 @@ public final class CodexCostScanner: @unchecked Sendable {
                     .appendingPathComponent(String(format: "%04d", year), isDirectory: true)
                     .appendingPathComponent(String(format: "%02d", month), isDirectory: true)
                     .appendingPathComponent(String(format: "%02d", dateDay), isDirectory: true)
-                files.append(contentsOf: jsonlFiles(in: dir))
+                append(jsonlFiles(in: dir))
             }
             guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { break }
             day = next
         }
 
+        append(recentlyModifiedJsonlFiles(modifiedSince: since))
         return files.sorted { $0.path < $1.path }
     }
 
@@ -111,6 +248,25 @@ public final class CodexCostScanner: @unchecked Sendable {
         else { return [] }
 
         return items.filter { $0.pathExtension.lowercased() == "jsonl" }
+    }
+
+    private func recentlyModifiedJsonlFiles(modifiedSince since: Date) -> [URL] {
+        guard let enumerator = FileManager.default.enumerator(
+            at: sessionsRoot,
+            includingPropertiesForKeys: [.isRegularFileKey, .contentModificationDateKey],
+            options: [.skipsHiddenFiles])
+        else { return [] }
+
+        var files: [URL] = []
+        for case let fileURL as URL in enumerator where fileURL.pathExtension.lowercased() == "jsonl" {
+            guard let values = try? fileURL.resourceValues(forKeys: [.isRegularFileKey, .contentModificationDateKey]),
+                  values.isRegularFile == true,
+                  let modified = values.contentModificationDate,
+                  modified >= since
+            else { continue }
+            files.append(fileURL)
+        }
+        return files
     }
 
     private func parseFile(_ fileURL: URL) -> [String: [String: TokenTotals]] {

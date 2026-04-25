@@ -135,4 +135,99 @@ final class CodexCostScannerTests: XCTestCase {
         XCTAssertEqual(snapshot.todayCostUSD, 0.0071, accuracy: 0.000001)
         XCTAssertEqual(cacheStore.load().version, AgentBarCache.currentVersion)
     }
+
+    func testDailyUsageSplitsLongLivedSessionByEventTimestamp() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let dayDir = root
+            .appendingPathComponent("2026", isDirectory: true)
+            .appendingPathComponent("04", isDirectory: true)
+            .appendingPathComponent("24", isDirectory: true)
+        try FileManager.default.createDirectory(at: dayDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let file = dayDir.appendingPathComponent("rollout-cross-day.jsonl")
+        let lines = [
+            #"{"timestamp":"2026-04-24T10:00:00.000Z","type":"turn_context","payload":{"model":"gpt-5.4"}}"#,
+            #"{"timestamp":"2026-04-24T10:00:01.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000,"cached_input_tokens":100,"output_tokens":100}}}}"#,
+            #"{"timestamp":"2026-04-25T02:00:01.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1300,"cached_input_tokens":100,"output_tokens":150}}}}"#,
+        ].joined(separator: "\n")
+        try lines.write(to: file, atomically: true, encoding: .utf8)
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let scanner = CodexCostScanner(
+            sessionsRoot: root,
+            calendar: calendar,
+            cacheStore: AgentBarCacheStore(fileURL: root.appendingPathComponent("cache.json")))
+        let now = CodexCostScanner.parseTimestamp("2026-04-25T12:00:00.000Z")!
+
+        let usage = scanner.dailyTokenUsage(days: 2, now: now)
+
+        XCTAssertEqual(usage.days.map(\.dayKey), ["2026-04-24", "2026-04-25"])
+        XCTAssertEqual(usage.days[0].tokens, 1_100)
+        XCTAssertEqual(usage.days[1].tokens, 350)
+        XCTAssertEqual(usage.totalTokens, 1_450)
+    }
+
+    func testDailyUsageFindsOlderSessionFileModifiedInsideWindow() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let oldDayDir = root
+            .appendingPathComponent("2026", isDirectory: true)
+            .appendingPathComponent("02", isDirectory: true)
+            .appendingPathComponent("27", isDirectory: true)
+        try FileManager.default.createDirectory(at: oldDayDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let file = oldDayDir.appendingPathComponent("rollout-old-file-active-today.jsonl")
+        let lines = [
+            #"{"timestamp":"2026-04-25T02:00:00.000Z","type":"turn_context","payload":{"model":"gpt-5.4"}}"#,
+            #"{"timestamp":"2026-04-25T02:00:01.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":300,"cached_input_tokens":20,"output_tokens":50}}}}"#,
+        ].joined(separator: "\n")
+        try lines.write(to: file, atomically: true, encoding: .utf8)
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let scanner = CodexCostScanner(
+            sessionsRoot: root,
+            calendar: calendar,
+            cacheStore: AgentBarCacheStore(fileURL: root.appendingPathComponent("cache.json")))
+        let now = CodexCostScanner.parseTimestamp("2026-04-25T12:00:00.000Z")!
+
+        let usage = scanner.dailyTokenUsage(days: 2, now: now)
+
+        XCTAssertEqual(usage.days.map(\.tokens), [0, 350])
+    }
+
+    func testYearlyUsageReturnsCalendarYearDays() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let dayDir = root
+            .appendingPathComponent("2026", isDirectory: true)
+            .appendingPathComponent("04", isDirectory: true)
+            .appendingPathComponent("25", isDirectory: true)
+        try FileManager.default.createDirectory(at: dayDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let file = dayDir.appendingPathComponent("rollout-year.jsonl")
+        let line = #"{"timestamp":"2026-04-25T02:00:01.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":300,"cached_input_tokens":20,"output_tokens":50}}}}"#
+        try line.write(to: file, atomically: true, encoding: .utf8)
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let scanner = CodexCostScanner(
+            sessionsRoot: root,
+            calendar: calendar,
+            cacheStore: AgentBarCacheStore(fileURL: root.appendingPathComponent("cache.json")))
+        let now = CodexCostScanner.parseTimestamp("2026-04-25T12:00:00.000Z")!
+
+        let usage = scanner.yearlyTokenUsage(year: 2026, now: now)
+
+        XCTAssertEqual(usage.days.first?.dayKey, "2026-01-01")
+        XCTAssertEqual(usage.days.last?.dayKey, "2026-12-31")
+        XCTAssertEqual(usage.days.count, 365)
+        XCTAssertEqual(usage.days.first { $0.dayKey == "2026-04-25" }?.tokens, 350)
+        XCTAssertEqual(scanner.usageYearRange(now: now), 2026...2026)
+    }
 }

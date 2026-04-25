@@ -4,6 +4,7 @@
 
 | 日期 | 功能域 | 用户价值 | 变更摘要 |
 | --- | --- | --- | --- |
+| 2026-04-25 | 设置窗口 | 用户可以在 AgentBar 设置里按年份查看类似 GitHub contribution calendar 的 Codex token 使用热力图，快速识别每天的本地消耗强度，并悬停查看当天具体费用和 token。 | 新增 Usage 页面，读取 `~/.codex/sessions` 的 `token_count` 事件并按事件 timestamp 聚合到自然日；结果复用 `~/.agentbar/cache.json` 的 session 文件 size/mtime 缓存，跨天继续同一个 session 时会把新增 token 分到对应日期，并补捞最近修改过的旧日期目录 session 文件；热力图补齐年份切换、月份、Mon/Wed/Fri 标尺和深色 hover 浮层。 |
 | 2026-04-25 | 顶部浮层交互 | 无 notch 屏幕在常驻或唤出后也保持更干净、更紧凑的单行信息，只有用户把鼠标移到 island 上时才露出 pin 和 settings 控制。 | 将 notch 屏已有的 action icon hover 显隐机制复用到普通屏，普通屏的 pin/gear 只在 hover 或账号展开态预留宽度并延迟显示，离开后恢复隐藏；收紧 quota、Today 和 30 Days 段落间距，去掉 `Tokens` 右侧额外安全宽度，并让 hover 展开/收起时固定左侧、只从右侧伸缩，避免先压缩末尾文字。 |
 | 2026-04-25 | 账号展开交互 | 用户查看账号 quota 后不用手动再次点击收起，鼠标离开短暂延迟后展开区会自动回到顶部 island 状态，并可按自己的使用节奏调整等待时间。 | 展开区复用 hover polling 记录鼠标离开面板的时间，默认连续离开 200ms 后收起；设置窗口新增 `Auto Collapse Delay`，以 ms 为单位在 100 到 5000ms 间调整，鼠标在倒计时内回到面板会取消并重新计算。 |
 | 2026-04-25 | 多账号切换 | 用户可以通过展开账号卡片里的账号切换控件切换 Codex 主用账号，新开的 Codex CLI 会话会使用切换后的账号，同时切换过程不会把 quota 闪成空数据。 | 账号卡片的邮箱和订阅 chip 右侧显示同高图标按钮，当前账号用 active 图标标识，只有点击非当前账号的切换图标才写回 live `auth.json`；本地先保留已有 quota/plan 并用滑动动画把目标账号置顶，后台刷新完成后再懒加载更新顶部和卡片数字。 |
