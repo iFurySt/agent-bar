@@ -1,5 +1,6 @@
 import AppKit
 import AgentBarCore
+import CoreGraphics
 
 @main
 enum AgentBarMain {
@@ -1866,10 +1867,17 @@ final class AgentBarPreferences {
 private extension NSScreen {
     var agentBarTopBarHeight: CGFloat {
         let visibleTopInset = max(0, frame.maxY - visibleFrame.maxY)
-        var height = visibleTopInset
-
+        let safeTopInset: CGFloat
         if #available(macOS 12.0, *) {
-            height = max(height, safeAreaInsets.top)
+            safeTopInset = safeAreaInsets.top
+        } else {
+            safeTopInset = 0
+        }
+
+        var height = max(visibleTopInset, safeTopInset)
+        if let liveMenuBarHeight = AgentBarMenuBarWindowProbe.height(for: self) {
+            let visualMenuBarHeight = AgentBarMenuBarWindowProbe.visualHeight(from: liveMenuBarHeight)
+            height = height > 0 ? min(height, visualMenuBarHeight) : visualMenuBarHeight
         }
 
         return max(24, height.rounded(.up))
@@ -1893,5 +1901,67 @@ private extension NSScreen {
 
     var agentBarSupportsAutoHide: Bool {
         agentBarNotchFrame == nil
+    }
+}
+
+private enum AgentBarMenuBarWindowProbe {
+    static func visualHeight(from windowHeight: CGFloat) -> CGFloat {
+        windowHeight >= 30 ? windowHeight - 5 : windowHeight
+    }
+
+    static func height(for screen: NSScreen) -> CGFloat? {
+        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+        guard let windows = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+            return nil
+        }
+
+        let screenBounds = screen.agentBarMenuBarProbeBounds
+        let candidates = windows.compactMap { info -> CGFloat? in
+            guard isMenuBarWindow(info),
+                  let boundsDictionary = info[kCGWindowBounds as String] as? NSDictionary,
+                  let bounds = CGRect(dictionaryRepresentation: boundsDictionary)
+            else {
+                return nil
+            }
+
+            guard bounds.height >= 20,
+                  bounds.height <= 80,
+                  horizontallyMatches(bounds, screenBounds: screenBounds),
+                  verticallyMatches(bounds, screenBounds: screenBounds)
+            else {
+                return nil
+            }
+
+            return bounds.height
+        }
+
+        return candidates.max()
+    }
+
+    private static func isMenuBarWindow(_ info: [String: Any]) -> Bool {
+        let owner = info[kCGWindowOwnerName as String] as? String
+        let name = info[kCGWindowName as String] as? String
+        return owner == "Window Server" && name == "Menubar"
+    }
+
+    private static func horizontallyMatches(_ windowBounds: CGRect, screenBounds: CGRect) -> Bool {
+        let overlap = min(windowBounds.maxX, screenBounds.maxX) - max(windowBounds.minX, screenBounds.minX)
+        return overlap >= screenBounds.width * 0.8
+    }
+
+    private static func verticallyMatches(_ windowBounds: CGRect, screenBounds: CGRect) -> Bool {
+        let expectedTop = screenBounds.minY
+        return abs(windowBounds.minY - expectedTop) <= 4
+    }
+}
+
+private extension NSScreen {
+    var agentBarMenuBarProbeBounds: CGRect {
+        let desktopTop = NSScreen.screens.map(\.frame.maxY).max() ?? frame.maxY
+        return CGRect(
+            x: frame.minX,
+            y: desktopTop - frame.maxY,
+            width: frame.width,
+            height: frame.height)
     }
 }
