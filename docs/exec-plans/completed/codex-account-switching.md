@@ -2,11 +2,11 @@
 
 ## 目标
 
-允许用户在 AgentBar 展开区点击已缓存账号，并把该账号凭据切换为 Codex CLI 的当前 live auth，使后续新开的 Codex 会话使用选中的账号。
+允许用户在 AgentBar 展开区通过账号卡片内的明确按钮选择已缓存账号，并把该账号凭据切换为 Codex CLI 的当前 live auth，使后续新开的 Codex 会话使用选中的账号。
 
 ## 范围
 
-- 包含：点击账号卡片、写回当前 `CODEX_HOME/auth.json` 或 `~/.codex/auth.json`、更新 AgentBar 当前账号排序和顶部 quota。
+- 包含：点击账号卡片内的账号切换控件、写回当前 `CODEX_HOME/auth.json` 或 `~/.codex/auth.json`、更新 AgentBar 当前账号排序和顶部 quota。
 - 不包含：热切换已经运行中的 Codex 进程、不接管 Codex 登录流程、不支持 keyring-only auth store 写入。
 
 ## 背景
@@ -23,19 +23,19 @@
 ## 里程碑
 
 1. 确认 Codex CLI live auth 读写位置。
-2. 实现账号卡片点击切换。
+2. 实现账号卡片内按钮点击切换。
 3. 切换后刷新 AgentBar 当前账号展示。
 
 ## 验证方式
 
 - 命令：`swift run AgentBar`
-- 手工检查：点击非当前账号卡片后，顶部百分比和置顶账号切到目标账号。
+- 手工检查：点击非当前账号卡片内的切换图标后，顶部百分比和置顶账号切到目标账号。
 - 观测检查：新开的 Codex CLI 会话读取切换后的 `auth.json`。
 
 ## 进度记录
 
 - [x] 确认 Codex CLI 和 CodexBar 都以替换 live auth material 作为切换语义。
-- [x] 实现点击切换账号。
+- [x] 实现按钮点击切换账号。
 - [x] 更新文档和 history。
 
 ## 决策记录

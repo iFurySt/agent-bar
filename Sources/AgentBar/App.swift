@@ -1123,7 +1123,7 @@ final class AccountBlocksView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         let location = convert(event.locationInWindow, from: nil)
-        guard let account = account(at: location) else {
+        guard let account = switchableAccount(at: location) else {
             super.mouseDown(with: event)
             return
         }
@@ -1132,16 +1132,18 @@ final class AccountBlocksView: NSView {
 
     override func resetCursorRects() {
         super.resetCursorRects()
-        if !accounts.isEmpty {
-            addCursorRect(bounds, cursor: .pointingHand)
+        let frames = layoutFrames(for: accounts)
+        for account in orderedAccounts(accounts).prefix(4) where !account.isCurrent {
+            guard let rect = frames[account.id] else { continue }
+            addCursorRect(switchButtonRect(for: account, in: rect), cursor: .pointingHand)
         }
     }
 
-    private func account(at point: NSPoint) -> CodexAccountUsageSnapshot? {
+    private func switchableAccount(at point: NSPoint) -> CodexAccountUsageSnapshot? {
         let frames = layoutFrames(for: accounts)
         for account in orderedAccounts(accounts).prefix(4) {
             guard let rect = frames[account.id] else { continue }
-            if rect.contains(point) {
+            if !account.isCurrent, switchButtonRect(for: account, in: rect).contains(point) {
                 return account
             }
         }
@@ -1242,7 +1244,7 @@ final class AccountBlocksView: NSView {
         block.lineWidth = 1
         block.stroke()
 
-        drawTitle(account.label, plan: account.plan, in: rect)
+        drawTitle(account.label, plan: account.plan, isCurrent: account.isCurrent, in: rect)
         drawMetric(
             title: "5h",
             percent: account.rateLimits.fiveHourRemainingPercent,
@@ -1255,8 +1257,22 @@ final class AccountBlocksView: NSView {
             in: NSRect(x: rect.minX + 12, y: rect.minY + 10, width: rect.width - 24, height: 14))
     }
 
-    private func drawTitle(_ title: String, plan: String?, in rect: NSRect) {
+    private func drawTitle(_ title: String, plan: String?, isCurrent: Bool, in rect: NSRect) {
+        let layout = titleLayout(title, plan: plan, in: rect)
+        layout.attributed.draw(in: layout.titleRect)
+
+        if let chipRect = layout.chipRect, let plan {
+            drawChip(plan, size: chipRect.size, in: chipRect)
+        }
+
+        drawSwitchButton(isCurrent: isCurrent, in: layout.switchRect)
+    }
+
+    private func titleLayout(_ title: String, plan: String?, in rect: NSRect) -> TitleLayout {
         let resolvedChipSize = plan.map { chipSize(for: $0) } ?? NSSize.zero
+        let chipGap: CGFloat = plan == nil ? 0 : 7
+        let actionGap: CGFloat = 7
+        let reservedAccessoryWidth = resolvedChipSize.width + chipGap + actionGap + Self.switchButtonWidth
         let value = truncated(title, maxLength: 38)
         let attributed = NSAttributedString(
             string: value,
@@ -1265,22 +1281,89 @@ final class AccountBlocksView: NSView {
                 .foregroundColor: NSColor.white.withAlphaComponent(0.88),
             ])
         let titleOrigin = NSPoint(x: rect.minX + 12, y: rect.maxY - 23)
+        let rightLimit = rect.maxX - 12
         let titleWidth = min(
             ceil(attributed.size().width),
-            max(40, rect.width - 24 - (plan == nil ? 0 : resolvedChipSize.width + 7)))
-        attributed.draw(in: NSRect(
+            max(40, rightLimit - titleOrigin.x - reservedAccessoryWidth))
+        let titleRect = NSRect(
             x: titleOrigin.x,
             y: titleOrigin.y,
             width: titleWidth,
-            height: 14))
+            height: 14)
 
-        if let plan {
-            drawChip(plan, size: resolvedChipSize, in: NSRect(
-                x: titleOrigin.x + titleWidth + 7,
+        let chipRect: NSRect?
+        let switchX: CGFloat
+        if plan != nil {
+            let rect = NSRect(
+                x: titleRect.maxX + chipGap,
                 y: rect.maxY - 24,
                 width: resolvedChipSize.width,
-                height: resolvedChipSize.height))
+                height: resolvedChipSize.height)
+            chipRect = rect
+            switchX = rect.maxX + actionGap
+        } else {
+            chipRect = nil
+            switchX = titleRect.maxX + actionGap
         }
+
+        let switchRect = NSRect(
+            x: min(switchX, rightLimit - Self.switchButtonWidth),
+            y: rect.maxY - 24,
+            width: Self.switchButtonWidth,
+            height: Self.switchButtonHeight)
+        return TitleLayout(
+            attributed: attributed,
+            titleRect: titleRect,
+            chipRect: chipRect,
+            switchRect: switchRect)
+    }
+
+    private func drawSwitchButton(isCurrent: Bool, in buttonRect: NSRect) {
+        let path = NSBezierPath(
+            roundedRect: buttonRect,
+            xRadius: buttonRect.height / 2,
+            yRadius: buttonRect.height / 2)
+        if isCurrent {
+            NSColor.systemGreen.withAlphaComponent(0.20).setFill()
+            NSColor.systemGreen.withAlphaComponent(0.34).setStroke()
+        } else {
+            NSColor.white.withAlphaComponent(0.105).setFill()
+            NSColor.white.withAlphaComponent(0.18).setStroke()
+        }
+        path.fill()
+        path.lineWidth = 0.8
+        path.stroke()
+
+        let symbolName = isCurrent ? "checkmark" : "arrow.left.arrow.right"
+        let symbolColor = isCurrent
+            ? NSColor.systemGreen.withAlphaComponent(0.95)
+            : NSColor.white.withAlphaComponent(0.76)
+        drawSymbol(symbolName, color: symbolColor, in: buttonRect.insetBy(dx: 6.5, dy: 3))
+    }
+
+    private func switchButtonRect(for account: CodexAccountUsageSnapshot, in rect: NSRect) -> NSRect {
+        titleLayout(account.label, plan: account.plan, in: rect).switchRect
+    }
+
+    private func drawSymbol(_ symbolName: String, color: NSColor, in rect: NSRect) {
+        let symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 9.5, weight: .semibold)
+            .applying(NSImage.SymbolConfiguration(hierarchicalColor: color))
+        if let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)?
+            .withSymbolConfiguration(symbolConfiguration)
+        {
+            image.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1)
+            return
+        }
+
+        let fallback = symbolName == "checkmark" ? "OK" : "><"
+        let attributed = NSAttributedString(
+            string: fallback,
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 8, weight: .bold),
+                .foregroundColor: color,
+            ])
+        let size = attributed.size()
+        attributed.draw(at: NSPoint(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2))
     }
 
     private func chipSize(for text: String) -> NSSize {
@@ -1372,6 +1455,15 @@ final class AccountBlocksView: NSView {
     }
 
     private static let reorderAnimationDuration: TimeInterval = 0.28
+    private static let switchButtonWidth: CGFloat = 24
+    private static let switchButtonHeight: CGFloat = 15
+
+    private struct TitleLayout {
+        let attributed: NSAttributedString
+        let titleRect: NSRect
+        let chipRect: NSRect?
+        let switchRect: NSRect
+    }
 }
 
 final class RollingTextLabel: NSView {
