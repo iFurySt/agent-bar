@@ -58,6 +58,10 @@ enum CodexAccountStore {
         return sanitized(set.accounts)
     }
 
+    static func account(id: String) -> CodexStoredAccount? {
+        load().first { $0.id == id }
+    }
+
     @discardableResult
     static func upsert(_ credentials: CodexAuthCredentials, now: Date = Date()) -> CodexStoredAccount {
         let id = credentials.stableAccountID
@@ -114,6 +118,36 @@ enum CodexAccountStore {
             result.append(account)
         }
         return result
+    }
+}
+
+public enum CodexAccountSwitchError: LocalizedError, Sendable {
+    case accountNotFound
+
+    public var errorDescription: String? {
+        switch self {
+        case .accountNotFound:
+            return "Saved Codex account was not found."
+        }
+    }
+}
+
+public enum CodexAccountSwitcher {
+    @discardableResult
+    public static func switchToAccount(id: String) throws -> CodexAccountUsageSnapshot {
+        guard let account = CodexAccountStore.account(id: id) else {
+            throw CodexAccountSwitchError.accountNotFound
+        }
+
+        try CodexAuthStore.save(account.credentials)
+        let updated = CodexAccountStore.upsert(account.credentials)
+        return CodexAccountUsageSnapshot(
+            id: updated.id,
+            label: updated.label,
+            rateLimits: CodexRateLimitSnapshot(fiveHourRemainingPercent: nil, weeklyRemainingPercent: nil),
+            isCurrent: true,
+            updatedAt: updated.updatedAt,
+            plan: nil)
     }
 }
 

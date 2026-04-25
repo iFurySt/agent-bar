@@ -89,6 +89,7 @@ final class IslandWindowController {
     private weak var settingsAnchor: NSView?
     private var refreshTask: Task<Void, Never>?
     private var hoverTimer: Timer?
+    private var activeAccountOverrideID: String?
     private var currentCosts = CodexCostSnapshot(
         todayCostUSD: 0,
         todayTokens: 0,
@@ -140,8 +141,13 @@ final class IslandWindowController {
 
         let snapshot = await snapshotService.snapshot()
         currentCosts = snapshot.costs
-        currentAccounts = snapshot.accounts
-        currentText = AgentBarDisplayFormatting.line(snapshot: snapshot)
+        currentAccounts = accountsApplyingActiveOverride(snapshot.accounts)
+        let visibleRateLimits = currentAccounts.first(where: \.isCurrent)?.rateLimits ?? snapshot.rateLimits
+        currentText = AgentBarDisplayFormatting.line(snapshot: AgentBarSnapshot(
+            rateLimits: visibleRateLimits,
+            costs: snapshot.costs,
+            accounts: currentAccounts,
+            isUsingRateLimitFallback: snapshot.isUsingRateLimitFallback))
         updateOverlays(animated: true)
     }
 
@@ -166,6 +172,9 @@ final class IslandWindowController {
                     overlay,
                     animated: true,
                     duration: self.paperPullAnimationDuration)
+            }
+            overlay.view.onAccountSwitch = { [weak self] accountID in
+                self?.switchAccount(accountID)
             }
             overlay.view.update(text: currentText, animated: false)
             overlay.view.update(accounts: currentAccounts)
@@ -322,6 +331,65 @@ final class IslandWindowController {
         updateHoverState(animated: true)
     }
 
+    private func switchAccount(_ accountID: String) {
+        do {
+            try CodexAccountSwitcher.switchToAccount(id: accountID)
+            activeAccountOverrideID = accountID
+            currentAccounts = locallyPromotedAccounts(accountID: accountID)
+            updateOverlays(animated: true)
+            refreshTask?.cancel()
+            refreshTask = Task { [weak self] in
+                guard let self else { return }
+                await self.refresh()
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(60))
+                    await self.refresh()
+                }
+            }
+        } catch {
+            NSSound.beep()
+        }
+    }
+
+    private func locallyPromotedAccounts(accountID: String) -> [CodexAccountUsageSnapshot] {
+        let existing = currentAccounts
+        guard !existing.isEmpty else {
+            return snapshotService.cachedAccounts()
+        }
+
+        return existing.map { account in
+            CodexAccountUsageSnapshot(
+                id: account.id,
+                label: account.label,
+                rateLimits: account.rateLimits,
+                isCurrent: account.id == accountID,
+                updatedAt: account.id == accountID ? Date() : account.updatedAt,
+                plan: account.plan)
+        }.sorted {
+            if $0.isCurrent != $1.isCurrent { return $0.isCurrent }
+            return ($0.updatedAt ?? .distantPast) > ($1.updatedAt ?? .distantPast)
+        }
+    }
+
+    private func accountsApplyingActiveOverride(_ accounts: [CodexAccountUsageSnapshot]) -> [CodexAccountUsageSnapshot] {
+        guard let activeAccountOverrideID else {
+            return accounts
+        }
+
+        return accounts.map { account in
+            CodexAccountUsageSnapshot(
+                id: account.id,
+                label: account.label,
+                rateLimits: account.rateLimits,
+                isCurrent: account.id == activeAccountOverrideID,
+                updatedAt: account.id == activeAccountOverrideID ? Date() : account.updatedAt,
+                plan: account.plan)
+        }.sorted {
+            if $0.isCurrent != $1.isCurrent { return $0.isCurrent }
+            return ($0.updatedAt ?? .distantPast) > ($1.updatedAt ?? .distantPast)
+        }
+    }
+
     private func toggleSettings(relativeTo anchor: NSView) {
         let controller: AgentBarSettingsWindowController
         if let existingController = settingsWindowController {
@@ -426,6 +494,7 @@ final class IslandView: NSView {
     var onPinToggle: (() -> Void)?
     var onSettingsOpen: ((NSView) -> Void)?
     var onExpansionToggle: (() -> Void)?
+    var onAccountSwitch: ((String) -> Void)?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -451,6 +520,9 @@ final class IslandView: NSView {
         addSubview(accountsView)
         addSubview(pinButton)
         addSubview(settingsButton)
+        accountsView.onAccountSelected = { [weak self] accountID in
+            self?.onAccountSwitch?(accountID)
+        }
         pinButton.target = self
         pinButton.action = #selector(pinButtonPressed)
         settingsButton.target = self
@@ -1008,10 +1080,18 @@ final class AccountBlocksView: NSView {
     static let blockGap: CGFloat = 8
 
     var accounts: [CodexAccountUsageSnapshot] = [] {
+        willSet {
+            previousFrames = layoutFrames(for: accounts)
+        }
         didSet {
+            startReorderAnimationIfNeeded(from: oldValue, to: accounts)
             needsDisplay = true
         }
     }
+    var onAccountSelected: ((String) -> Void)?
+    private var previousFrames: [String: NSRect] = [:]
+    private var animationStart: CFTimeInterval?
+    private var animationTimer: Timer?
 
     override var isOpaque: Bool {
         false
@@ -1025,16 +1105,119 @@ final class AccountBlocksView: NSView {
             return
         }
 
-        let ordered = accounts.sorted {
+        let ordered = orderedAccounts(accounts)
+        let targetFrames = layoutFramesForOrderedAccounts(ordered)
+        let progress = animationProgress()
+
+        for account in ordered.prefix(4) {
+            let target = targetFrames[account.id] ?? .zero
+            let frame: NSRect
+            if progress < 1, let previous = previousFrames[account.id] {
+                frame = interpolate(from: previous, to: target, progress: progress)
+            } else {
+                frame = target
+            }
+            drawBlock(account, in: frame)
+        }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let location = convert(event.locationInWindow, from: nil)
+        guard let account = account(at: location) else {
+            super.mouseDown(with: event)
+            return
+        }
+        onAccountSelected?(account.id)
+    }
+
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        if !accounts.isEmpty {
+            addCursorRect(bounds, cursor: .pointingHand)
+        }
+    }
+
+    private func account(at point: NSPoint) -> CodexAccountUsageSnapshot? {
+        let frames = layoutFrames(for: accounts)
+        for account in orderedAccounts(accounts).prefix(4) {
+            guard let rect = frames[account.id] else { continue }
+            if rect.contains(point) {
+                return account
+            }
+        }
+        return nil
+    }
+
+    private func orderedAccounts(_ value: [CodexAccountUsageSnapshot]) -> [CodexAccountUsageSnapshot] {
+        value.sorted {
             if $0.isCurrent != $1.isCurrent { return $0.isCurrent }
             return ($0.updatedAt ?? .distantPast) > ($1.updatedAt ?? .distantPast)
         }
+    }
 
+    private func layoutFrames(for value: [CodexAccountUsageSnapshot]) -> [String: NSRect] {
+        layoutFramesForOrderedAccounts(orderedAccounts(value))
+    }
+
+    private func layoutFramesForOrderedAccounts(_ ordered: [CodexAccountUsageSnapshot]) -> [String: NSRect] {
+        var frames: [String: NSRect] = [:]
         var y = bounds.maxY - Self.blockHeight
         for account in ordered.prefix(4) {
-            drawBlock(account, in: NSRect(x: 0, y: y, width: bounds.width, height: Self.blockHeight))
+            frames[account.id] = NSRect(x: 0, y: y, width: bounds.width, height: Self.blockHeight)
             y -= Self.blockHeight + Self.blockGap
         }
+        return frames
+    }
+
+    private func startReorderAnimationIfNeeded(
+        from oldAccounts: [CodexAccountUsageSnapshot],
+        to newAccounts: [CodexAccountUsageSnapshot])
+    {
+        let oldOrder = orderedAccounts(oldAccounts).prefix(4).map(\.id)
+        let newOrder = orderedAccounts(newAccounts).prefix(4).map(\.id)
+        guard oldOrder != newOrder, !oldOrder.isEmpty else {
+            stopAnimationTimer()
+            animationStart = nil
+            return
+        }
+
+        animationStart = CACurrentMediaTime()
+        startAnimationTimer()
+    }
+
+    private func animationProgress() -> CGFloat {
+        guard let animationStart else { return 1 }
+        let raw = min(1, max(0, (CACurrentMediaTime() - animationStart) / Self.reorderAnimationDuration))
+        let eased = raw * raw * (3 - 2 * raw)
+        if raw >= 1 {
+            self.animationStart = nil
+            stopAnimationTimer()
+        }
+        return CGFloat(eased)
+    }
+
+    private func interpolate(from: NSRect, to: NSRect, progress: CGFloat) -> NSRect {
+        NSRect(
+            x: from.minX + (to.minX - from.minX) * progress,
+            y: from.minY + (to.minY - from.minY) * progress,
+            width: from.width + (to.width - from.width) * progress,
+            height: from.height + (to.height - from.height) * progress)
+    }
+
+    private func startAnimationTimer() {
+        animationTimer?.invalidate()
+        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.needsDisplay = true
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        animationTimer = timer
+    }
+
+    private func stopAnimationTimer() {
+        animationTimer?.invalidate()
+        animationTimer = nil
     }
 
     private func drawEmptyState() {
@@ -1187,6 +1370,8 @@ final class AccountBlocksView: NSView {
         let tail = value.suffix(5)
         return "\(head)...\(tail)"
     }
+
+    private static let reorderAnimationDuration: TimeInterval = 0.28
 }
 
 final class RollingTextLabel: NSView {

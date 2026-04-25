@@ -4,6 +4,7 @@
 
 | 日期 | 功能域 | 用户价值 | 变更摘要 |
 | --- | --- | --- | --- |
+| 2026-04-25 | 多账号切换 | 用户可以直接在展开的账号卡片中切换 Codex 主用账号，新开的 Codex CLI 会话会使用切换后的账号，同时切换过程不会把 quota 闪成空数据。 | 账号卡片支持点击写回 live `auth.json`，本地先保留已有 quota/plan 并用滑动动画把目标账号置顶，后台刷新完成后再懒加载更新顶部和卡片数字。 |
 | 2026-04-25 | 多账号 quota | 用户切换 Codex 登录账号后，AgentBar 可以累积并展示多个账号的剩余 quota，当前主用账号保持置顶，方便比较 5h 和 7d 资源。 | island 支持点击向下展开，展开区以 macOS 风格圆角账号卡片展示邮箱、订阅 chip、5h/7d 剩余百分比、小进度条和 reset 倒计时；新增 `~/.agentbar/accounts.json` 缓存已见 OAuth token，并让顶部百分比优先绑定当前 `auth.json` 账号。 |
 | 2026-04-25 | 顶部浮层交互 | notch 屏下方的 settings 悬停交互更稳定，不再在过渡中遮挡右侧百分比文案。 | 调整 notch 布局顺序，保证 usage 文本使用完整宽度，settings 按钮改为 hover 后再显隐，并在 hover 状态变化时触发窗口尺寸重算，避免展开动画中间帧出现 `32%` 只显示 `3` 的裁切现象。 |
 | 2026-04-24 | 设置窗口 | 用户可以直接从顶部 bar 右侧齿轮管理开机自动启动和自动更新，也可以在 About 页面进入 GitHub 仓库。 | 在 PIN 右侧新增常驻 gear icon，点击打开紧凑 macOS preferences 风格设置窗口；接入 `SMAppService.mainApp` 开机启动开关、Sparkle 自动更新开关和 About GitHub 页面，并使用 `#226CFF` 选中态。 |

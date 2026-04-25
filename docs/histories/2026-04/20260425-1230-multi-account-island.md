@@ -23,6 +23,8 @@
 - **Account cards**: 展开区从纯文本行升级为圆角账号卡片，当前账号只排序置顶，不再显示 `Current`；每张卡展示 5h/7d 剩余百分比、小进度条和 reset 倒计时。
 - **Plan chip**: 从 Codex usage response 的 `plan_type` 读取 PLUS/PRO/TEAM 等订阅信息，并在账号卡片右上角以 chip 展示。
 - **Current account priority**: 顶部 island 百分比优先使用当前 `auth.json` 账号的 usage API 结果，session JSONL fallback 只在 API 缺失或失败时补位，避免旧 session 里的其他账号 quota 覆盖主账号。
+- **Account switching**: 账号卡片支持点击切换，会把目标账号 OAuth token 写回当前 Codex live `auth.json`，使后续新开的 Codex CLI 会话使用该账号。
+- **Switch transition**: 切换账号时先本地重排并保留已有 quota/plan，避免卡片闪成 `--%`；被选账号会滑动到顶部，后台刷新完成后再懒加载更新数字。
 - **Docs**: 更新架构和安全文档，明确新增 token 缓存行为。
 
 ### Design Intent (Why)

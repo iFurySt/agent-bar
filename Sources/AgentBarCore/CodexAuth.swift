@@ -101,6 +101,11 @@ enum CodexAuthStore {
         let data = try JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys])
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try data.write(to: url, options: .atomic)
+        #if os(macOS)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: NSNumber(value: Int16(0o600))],
+            ofItemAtPath: url.path)
+        #endif
     }
 
     private static func stringValue(in dictionary: [String: Any], snake: String, camel: String) -> String? {
