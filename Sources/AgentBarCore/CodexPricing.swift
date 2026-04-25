@@ -26,6 +26,7 @@ enum CodexPricing {
         "gpt-5.4-mini": Price(input: 7.5e-7, output: 4.5e-6, cachedInput: 7.5e-8),
         "gpt-5.4-nano": Price(input: 2e-7, output: 1.25e-6, cachedInput: 2e-8),
         "gpt-5.4-pro": Price(input: 3e-5, output: 1.8e-4, cachedInput: nil),
+        "gpt-5.5": Price(input: 5e-6, output: 3e-5, cachedInput: 5e-7),
     ]
 
     static func normalizeCodexModel(_ raw: String) -> String {

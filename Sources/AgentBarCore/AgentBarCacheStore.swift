@@ -20,6 +20,7 @@ public final class AgentBarCacheStore: @unchecked Sendable {
         lock.withLock {
             var cache = loadUnlocked()
             mutate(&cache)
+            cache.version = AgentBarCache.currentVersion
             saveUnlocked(cache)
         }
     }
@@ -40,7 +41,7 @@ public final class AgentBarCacheStore: @unchecked Sendable {
     private func loadUnlocked() -> AgentBarCache {
         guard let data = try? Data(contentsOf: fileURL),
               let cache = try? JSONDecoder().decode(AgentBarCache.self, from: data),
-              cache.version == AgentBarCache.currentVersion
+              AgentBarCache.supportedVersions.contains(cache.version)
         else { return .empty }
         return cache
     }
@@ -62,6 +63,7 @@ public final class AgentBarCacheStore: @unchecked Sendable {
 
 public struct AgentBarCache: Codable, Equatable, Sendable {
     static let currentVersion = 2
+    static let supportedVersions: Set<Int> = [2, 3]
     static let empty = AgentBarCache(version: currentVersion)
 
     var version: Int = currentVersion
@@ -117,6 +119,14 @@ struct CachedRateLimitCandidate: Codable, Equatable, Sendable {
 struct CachedCostFile: Codable, Equatable, Sendable {
     let metadata: CachedFileMetadata
     let days: [String: [String: TokenTotals]]
+
+    var needsPricingRefresh: Bool {
+        days.values.contains { models in
+            models.contains { model, totals in
+                model == "gpt-5.5" && totals.totalTokens > 0 && totals.costUSD == 0
+            }
+        }
+    }
 }
 
 private extension NSLock {

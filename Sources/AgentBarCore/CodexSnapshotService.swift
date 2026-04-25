@@ -41,6 +41,36 @@ public final class CodexSnapshotService: @unchecked Sendable {
         cacheStore.load().latestSnapshot?.snapshot
     }
 
+    public func cachedCosts(now: Date = Date(), calendar: Calendar = .current) -> CodexCostSnapshot? {
+        let cache = cacheStore.load()
+        guard !cache.costFiles.isEmpty else { return nil }
+
+        let todayKey = CodexCostScanner.dayKey(for: now, calendar: calendar)
+        let since = calendar.date(byAdding: .day, value: -29, to: calendar.startOfDay(for: now)) ?? now
+        let sinceKey = CodexCostScanner.dayKey(for: since, calendar: calendar)
+        var days: [String: TokenTotals] = [:]
+
+        for file in cache.costFiles.values {
+            for (day, models) in file.days where day >= sinceKey && day <= todayKey {
+                for (_, totals) in models {
+                    days[day, default: .zero].add(totals)
+                }
+            }
+        }
+
+        guard !days.isEmpty else { return nil }
+        let today = days[todayKey] ?? .zero
+        var last30 = TokenTotals.zero
+        for (_, totals) in days {
+            last30.add(totals)
+        }
+        return CodexCostSnapshot(
+            todayCostUSD: today.costUSD,
+            todayTokens: today.totalTokens,
+            last30DaysCostUSD: last30.costUSD,
+            last30DaysTokens: last30.totalTokens)
+    }
+
     public func cachedAccounts() -> [CodexAccountUsageSnapshot] {
         let currentID = try? CodexAuthStore.load().stableAccountID
         return CodexAccountStore.load().map { account in
@@ -71,6 +101,10 @@ public final class CodexSnapshotService: @unchecked Sendable {
             isUsingRateLimitFallback: resolvedRateLimits.isUsingFallback)
         cacheStore.save(snapshot: snapshot)
         return snapshot
+    }
+
+    public func accountRateLimits() async -> [CodexAccountUsageSnapshot] {
+        await usageClient.fetchAccountRateLimits()
     }
 
     public func quickRateLimits() async -> CodexRateLimitSnapshot {

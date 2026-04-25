@@ -60,4 +60,79 @@ final class CodexCostScannerTests: XCTestCase {
 
         XCTAssertEqual(scanner.scan(now: now).todayTokens, 2_200)
     }
+
+    func testPricesGPT55TokenCountEvents() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let dayDir = root
+            .appendingPathComponent("2026", isDirectory: true)
+            .appendingPathComponent("04", isDirectory: true)
+            .appendingPathComponent("25", isDirectory: true)
+        try FileManager.default.createDirectory(at: dayDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let file = dayDir.appendingPathComponent("rollout.jsonl")
+        let lines = [
+            #"{"timestamp":"2026-04-25T10:00:00.000Z","type":"turn_context","payload":{"model":"gpt-5.5"}}"#,
+            #"{"timestamp":"2026-04-25T10:00:01.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000,"cached_input_tokens":200,"output_tokens":100,"total_tokens":1100}}}}"#,
+        ].joined(separator: "\n")
+        try lines.write(to: file, atomically: true, encoding: .utf8)
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let scanner = CodexCostScanner(
+            sessionsRoot: root,
+            calendar: calendar,
+            cacheStore: AgentBarCacheStore(fileURL: root.appendingPathComponent("cache.json")))
+        let now = CodexCostScanner.parseTimestamp("2026-04-25T12:00:00.000Z")!
+
+        let snapshot = scanner.scan(now: now)
+
+        XCTAssertEqual(snapshot.todayTokens, 1_100)
+        XCTAssertEqual(snapshot.last30DaysTokens, 1_100)
+        XCTAssertEqual(snapshot.todayCostUSD, 0.0071, accuracy: 0.000001)
+    }
+
+    func testRepricesCachedGPT55ZeroCostFiles() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let dayDir = root
+            .appendingPathComponent("2026", isDirectory: true)
+            .appendingPathComponent("04", isDirectory: true)
+            .appendingPathComponent("25", isDirectory: true)
+        try FileManager.default.createDirectory(at: dayDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let file = dayDir.appendingPathComponent("rollout.jsonl")
+        let lines = [
+            #"{"timestamp":"2026-04-25T10:00:00.000Z","type":"turn_context","payload":{"model":"gpt-5.5"}}"#,
+            #"{"timestamp":"2026-04-25T10:00:01.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000,"cached_input_tokens":200,"output_tokens":100,"total_tokens":1100}}}}"#,
+        ].joined(separator: "\n")
+        try lines.write(to: file, atomically: true, encoding: .utf8)
+
+        guard let metadata = CachedFileMetadata(fileURL: file) else {
+            return XCTFail("Expected test file metadata")
+        }
+        let cacheStore = AgentBarCacheStore(fileURL: root.appendingPathComponent("cache.json"))
+        cacheStore.update { cache in
+            cache.costFiles[file.path] = CachedCostFile(
+                metadata: metadata,
+                days: [
+                    "2026-04-25": [
+                        "gpt-5.5": TokenTotals(totalTokens: 1_100, costUSD: 0),
+                    ],
+                ])
+        }
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let scanner = CodexCostScanner(sessionsRoot: root, calendar: calendar, cacheStore: cacheStore)
+        let now = CodexCostScanner.parseTimestamp("2026-04-25T12:00:00.000Z")!
+
+        let snapshot = scanner.scan(now: now)
+
+        XCTAssertEqual(snapshot.todayTokens, 1_100)
+        XCTAssertEqual(snapshot.todayCostUSD, 0.0071, accuracy: 0.000001)
+        XCTAssertEqual(cacheStore.load().version, AgentBarCache.currentVersion)
+    }
 }

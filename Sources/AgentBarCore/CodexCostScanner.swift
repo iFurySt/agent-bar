@@ -42,7 +42,10 @@ public final class CodexCostScanner: @unchecked Sendable {
         for file in files {
             guard let metadata = CachedFileMetadata(fileURL: file) else { continue }
             let fileDays: [String: [String: TokenTotals]]
-            if let cached = cache.costFiles[file.path], cached.metadata == metadata {
+            if let cached = cache.costFiles[file.path],
+               cached.metadata == metadata,
+               !cached.needsPricingRefresh
+            {
                 fileDays = cached.days
                 updatedFiles[file.path] = cached
             } else {

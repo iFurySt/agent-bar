@@ -105,6 +105,11 @@ final class IslandWindowController {
             currentCosts = cachedSnapshot.costs
             currentAccounts = cachedSnapshot.accounts
             currentText = AgentBarDisplayFormatting.line(snapshot: cachedSnapshot)
+        } else if let cachedCosts = snapshotService.cachedCosts() {
+            currentCosts = cachedCosts
+            currentText = AgentBarDisplayFormatting.line(snapshot: AgentBarSnapshot(
+                rateLimits: CodexRateLimitSnapshot(fiveHourRemainingPercent: nil, weeklyRemainingPercent: nil),
+                costs: cachedCosts))
         }
         if currentAccounts.isEmpty {
             currentAccounts = snapshotService.cachedAccounts()
@@ -138,6 +143,21 @@ final class IslandWindowController {
         let quickRateLimits = await snapshotService.quickRateLimits()
         currentText = AgentBarDisplayFormatting.line(snapshot: AgentBarSnapshot(rateLimits: quickRateLimits, costs: currentCosts, accounts: currentAccounts))
         updateOverlays(animated: true)
+
+        if currentAccounts.isEmpty || currentAccounts.allSatisfy({
+            $0.rateLimits.fiveHourRemainingPercent == nil && $0.rateLimits.weeklyRemainingPercent == nil
+        }) {
+            let accounts = await snapshotService.accountRateLimits()
+            if !accounts.isEmpty {
+                currentAccounts = accountsApplyingActiveOverride(accounts)
+                let visibleRateLimits = currentAccounts.first(where: \.isCurrent)?.rateLimits ?? quickRateLimits
+                currentText = AgentBarDisplayFormatting.line(snapshot: AgentBarSnapshot(
+                    rateLimits: visibleRateLimits,
+                    costs: currentCosts,
+                    accounts: currentAccounts))
+                updateOverlays(animated: true)
+            }
+        }
 
         let snapshot = await snapshotService.snapshot()
         currentCosts = snapshot.costs
@@ -1473,6 +1493,7 @@ final class AccountBlocksView: NSView {
 
         guard let percent else { return }
         let ratio = CGFloat(min(100, max(0, percent))) / 100
+        guard ratio > 0 else { return }
         let fillRect = NSRect(x: trackRect.minX, y: trackRect.minY, width: max(5, trackRect.width * ratio), height: trackRect.height)
         let fill = NSBezierPath(roundedRect: fillRect, xRadius: 3, yRadius: 3)
         Self.percentColor(percent).withAlphaComponent(0.88).setFill()
