@@ -4,6 +4,7 @@
 
 | 日期 | 功能域 | 用户价值 | 变更摘要 |
 | --- | --- | --- | --- |
+| 2026-04-25 | 多账号 quota | 用户切换 Codex 登录账号后，AgentBar 可以累积并展示多个账号的剩余 quota，当前主用账号保持置顶，方便比较 5h 和 7d 资源。 | island 支持点击向下展开，展开区以 macOS 风格圆角账号卡片展示邮箱、订阅 chip、5h/7d 剩余百分比、小进度条和 reset 倒计时；新增 `~/.agentbar/accounts.json` 缓存已见 OAuth token，并让顶部百分比优先绑定当前 `auth.json` 账号。 |
 | 2026-04-25 | 顶部浮层交互 | notch 屏下方的 settings 悬停交互更稳定，不再在过渡中遮挡右侧百分比文案。 | 调整 notch 布局顺序，保证 usage 文本使用完整宽度，settings 按钮改为 hover 后再显隐，并在 hover 状态变化时触发窗口尺寸重算，避免展开动画中间帧出现 `32%` 只显示 `3` 的裁切现象。 |
 | 2026-04-24 | 设置窗口 | 用户可以直接从顶部 bar 右侧齿轮管理开机自动启动和自动更新，也可以在 About 页面进入 GitHub 仓库。 | 在 PIN 右侧新增常驻 gear icon，点击打开紧凑 macOS preferences 风格设置窗口；接入 `SMAppService.mainApp` 开机启动开关、Sparkle 自动更新开关和 About GitHub 页面，并使用 `#226CFF` 选中态。 |
 | 2026-04-24 | 自动更新 | 安装过 Sparkle 版本后，AgentBar 可以从 GitHub Releases 自动检测新版本，后台下载完成后再让用户确认是否安装；跳过某个版本后，同版本不会重复打扰。 | 接入 Sparkle 2.9.1，自定义更新确认流程，release workflow 生成并上传签名 `appcast.xml`，DMG 内嵌 `Sparkle.framework` 和公钥配置。 |

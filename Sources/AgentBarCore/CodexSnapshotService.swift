@@ -3,15 +3,18 @@ import Foundation
 public struct AgentBarSnapshot: Equatable, Sendable {
     public let rateLimits: CodexRateLimitSnapshot
     public let costs: CodexCostSnapshot
+    public let accounts: [CodexAccountUsageSnapshot]
     public let isUsingRateLimitFallback: Bool
 
     public init(
         rateLimits: CodexRateLimitSnapshot,
         costs: CodexCostSnapshot,
+        accounts: [CodexAccountUsageSnapshot] = [],
         isUsingRateLimitFallback: Bool = false)
     {
         self.rateLimits = rateLimits
         self.costs = costs
+        self.accounts = accounts
         self.isUsingRateLimitFallback = isUsingRateLimitFallback
     }
 }
@@ -38,23 +41,44 @@ public final class CodexSnapshotService: @unchecked Sendable {
         cacheStore.load().latestSnapshot?.snapshot
     }
 
+    public func cachedAccounts() -> [CodexAccountUsageSnapshot] {
+        let currentID = try? CodexAuthStore.load().stableAccountID
+        return CodexAccountStore.load().map { account in
+            CodexAccountUsageSnapshot(
+                id: account.id,
+                label: account.label,
+                rateLimits: CodexRateLimitSnapshot(fiveHourRemainingPercent: nil, weeklyRemainingPercent: nil),
+                isCurrent: account.id == currentID,
+                updatedAt: account.updatedAt,
+                plan: nil)
+        }
+    }
+
     public func snapshot() async -> AgentBarSnapshot {
         let costScanner = self.costScanner
         let costTask = Task.detached(priority: .utility) {
             costScanner.scan()
+        }
+        let accountTask = Task {
+            await self.usageClient.fetchAccountRateLimits()
         }
 
         let resolvedRateLimits = await resolveRateLimits()
         let snapshot = await AgentBarSnapshot(
             rateLimits: resolvedRateLimits.snapshot,
             costs: costTask.value,
+            accounts: accountTask.value,
             isUsingRateLimitFallback: resolvedRateLimits.isUsingFallback)
         cacheStore.save(snapshot: snapshot)
         return snapshot
     }
 
     public func quickRateLimits() async -> CodexRateLimitSnapshot {
-        await resolveRateLimits().snapshot
+        do {
+            return try await usageClient.fetchRateLimits()
+        } catch {
+            return await resolveRateLimits().snapshot
+        }
     }
 
     private func resolveRateLimits() async -> (snapshot: CodexRateLimitSnapshot, isUsingFallback: Bool) {
@@ -63,18 +87,15 @@ public final class CodexSnapshotService: @unchecked Sendable {
             fallbackScanner.latestRateLimits()
         }
 
-        let fallbackRateLimits = await fallbackTask.value
-        if !fallbackRateLimits.hasMissingPercent {
-            return (fallbackRateLimits, true)
-        }
-
         do {
             let fetchedRateLimits = try await usageClient.fetchRateLimits()
+            let fallbackRateLimits = await fallbackTask.value
             let rateLimits = fetchedRateLimits.fillingMissing(with: fallbackRateLimits)
             return (
                 rateLimits,
                 fetchedRateLimits.hasMissingPercent && fallbackRateLimits != fetchedRateLimits)
         } catch {
+            let fallbackRateLimits = await fallbackTask.value
             return (fallbackRateLimits, true)
         }
     }

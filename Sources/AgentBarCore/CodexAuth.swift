@@ -3,7 +3,7 @@ import Foundation
 import FoundationNetworking
 #endif
 
-struct CodexAuthCredentials {
+struct CodexAuthCredentials: Codable, Equatable, Sendable {
     let accessToken: String
     let refreshToken: String
     let idToken: String?
@@ -152,7 +152,7 @@ enum CodexTokenRefresher {
             accessToken: json["access_token"] as? String ?? credentials.accessToken,
             refreshToken: json["refresh_token"] as? String ?? credentials.refreshToken,
             idToken: json["id_token"] as? String ?? credentials.idToken,
-            accountId: credentials.accountId,
+            accountId: json["account_id"] as? String ?? credentials.accountId,
             lastRefresh: Date())
     }
 }

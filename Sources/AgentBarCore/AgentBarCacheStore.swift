@@ -61,7 +61,7 @@ public final class AgentBarCacheStore: @unchecked Sendable {
 }
 
 public struct AgentBarCache: Codable, Equatable, Sendable {
-    static let currentVersion = 1
+    static let currentVersion = 2
     static let empty = AgentBarCache(version: currentVersion)
 
     var version: Int = currentVersion
@@ -73,16 +73,18 @@ public struct AgentBarCache: Codable, Equatable, Sendable {
 struct CachedAgentBarSnapshot: Codable, Equatable, Sendable {
     let rateLimits: CodexRateLimitSnapshot
     let costs: CodexCostSnapshot
+    let accounts: [CodexAccountUsageSnapshot]
     let updatedAt: Date
 
     init(snapshot: AgentBarSnapshot, updatedAt: Date) {
         self.rateLimits = snapshot.rateLimits
         self.costs = snapshot.costs
+        self.accounts = snapshot.accounts
         self.updatedAt = updatedAt
     }
 
     var snapshot: AgentBarSnapshot {
-        AgentBarSnapshot(rateLimits: rateLimits, costs: costs)
+        AgentBarSnapshot(rateLimits: rateLimits, costs: costs, accounts: accounts)
     }
 }
 

@@ -94,6 +94,7 @@ final class IslandWindowController {
         todayTokens: 0,
         last30DaysCostUSD: 0,
         last30DaysTokens: 0)
+    private var currentAccounts: [CodexAccountUsageSnapshot] = []
     private var currentText = "5h --%   7d --%      Today: $0.00 \u{00B7} -- / ~30 Days: $0.00 \u{00B7} -- Tokens"
 
     init(updater: AgentBarUpdater) {
@@ -101,7 +102,11 @@ final class IslandWindowController {
 
         if let cachedSnapshot = snapshotService.cachedSnapshot() {
             currentCosts = cachedSnapshot.costs
+            currentAccounts = cachedSnapshot.accounts
             currentText = AgentBarDisplayFormatting.line(snapshot: cachedSnapshot)
+        }
+        if currentAccounts.isEmpty {
+            currentAccounts = snapshotService.cachedAccounts()
         }
 
         NotificationCenter.default.addObserver(
@@ -130,11 +135,12 @@ final class IslandWindowController {
 
     private func refresh() async {
         let quickRateLimits = await snapshotService.quickRateLimits()
-        currentText = AgentBarDisplayFormatting.line(snapshot: AgentBarSnapshot(rateLimits: quickRateLimits, costs: currentCosts))
+        currentText = AgentBarDisplayFormatting.line(snapshot: AgentBarSnapshot(rateLimits: quickRateLimits, costs: currentCosts, accounts: currentAccounts))
         updateOverlays(animated: true)
 
         let snapshot = await snapshotService.snapshot()
         currentCosts = snapshot.costs
+        currentAccounts = snapshot.accounts
         currentText = AgentBarDisplayFormatting.line(snapshot: snapshot)
         updateOverlays(animated: true)
     }
@@ -162,6 +168,7 @@ final class IslandWindowController {
                     duration: self.paperPullAnimationDuration)
             }
             overlay.view.update(text: currentText, animated: false)
+            overlay.view.update(accounts: currentAccounts)
             overlay.view.setPinned(preferences.isPinned)
             overlay.view.setExpanded(overlay.isExpanded)
             overlay.isHovered = isMouseHovering(overlay, at: mouseLocation)
@@ -178,6 +185,7 @@ final class IslandWindowController {
     private func updateOverlays(animated: Bool = false) {
         for overlay in overlays {
             let textChanged = overlay.view.update(text: currentText, animated: animated)
+            overlay.view.update(accounts: currentAccounts)
             overlay.view.setPinned(preferences.isPinned)
             overlay.view.setExpanded(overlay.isExpanded)
             position(
@@ -401,6 +409,7 @@ final class IslandView: NSView {
     private let fullLabel = RollingTextLabel()
     private let quotaLabel = RollingTextLabel()
     private let usageLabel = RollingTextLabel()
+    private let accountsView = AccountBlocksView()
     private let pinButton = PinButton()
     private let settingsButton = SettingsButton()
     private var horizontalPadding: CGFloat = 0
@@ -439,6 +448,7 @@ final class IslandView: NSView {
         addSubview(fullLabel)
         addSubview(quotaLabel)
         addSubview(usageLabel)
+        addSubview(accountsView)
         addSubview(pinButton)
         addSubview(settingsButton)
         pinButton.target = self
@@ -508,6 +518,12 @@ final class IslandView: NSView {
         return textChanged
     }
 
+    func update(accounts: [CodexAccountUsageSnapshot]) {
+        accountsView.accounts = Array(accounts.prefix(Self.maxExpandedAccounts))
+        needsLayout = true
+        needsDisplay = true
+    }
+
     func setPinned(_ isPinned: Bool) {
         pinButton.setPinned(isPinned)
     }
@@ -547,6 +563,7 @@ final class IslandView: NSView {
             fullLabel.isHidden = false
             quotaLabel.isHidden = true
             usageLabel.isHidden = true
+            accountsView.isHidden = !isExpanded
         case let .notch(height, gapWidth, showsPin, showsSettings):
             horizontalPadding = 16
             notchInnerPadding = 2
@@ -563,6 +580,7 @@ final class IslandView: NSView {
             fullLabel.isHidden = true
             quotaLabel.isHidden = false
             usageLabel.isHidden = false
+            accountsView.isHidden = !isExpanded
         }
         needsDisplay = true
         needsLayout = true
@@ -594,6 +612,7 @@ final class IslandView: NSView {
 
     private func layoutAttachedBar() {
         iconView.isHidden = false
+        accountsView.isHidden = !isExpanded
 
         let textHeight = ceil(fullLabel.intrinsicContentSize.height)
         let centerY = topContentCenterY
@@ -615,10 +634,12 @@ final class IslandView: NSView {
             width: labelWidth,
             height: textHeight)
         layoutPinButton(after: fullLabel.frame.maxX, centerY: centerY)
+        layoutAccountsLabel()
     }
 
     private func layoutNotch() {
         iconView.isHidden = false
+        accountsView.isHidden = !isExpanded
         pinButton.frame = .zero
         settingsButton.frame = .zero
 
@@ -683,6 +704,23 @@ final class IslandView: NSView {
             pinButton.frame = .zero
             settingsButton.frame = .zero
         }
+        layoutAccountsLabel()
+    }
+
+    private func layoutAccountsLabel() {
+        guard isExpanded else {
+            accountsView.frame = .zero
+            return
+        }
+
+        let x = max(8, horizontalPadding - 2)
+        let topY = bounds.maxY - notchHeight - 8
+        let height = max(0, topY - bounds.minY - 6)
+        accountsView.frame = NSRect(
+            x: x,
+            y: bounds.minY + 8,
+            width: max(0, bounds.width - x * 2),
+            height: height)
     }
 
     private func layoutPinButton(after x: CGFloat, centerY: CGFloat) {
@@ -943,7 +981,14 @@ final class IslandView: NSView {
     }
 
     private var paperPullHeight: CGFloat {
-        isExpanded ? Self.expandedPullHeight : 0
+        isExpanded ? expandedPullHeight : 0
+    }
+
+    private var expandedPullHeight: CGFloat {
+        let accountCount = max(1, min(accountsView.accounts.count, Self.maxExpandedAccounts))
+        let blockHeight = AccountBlocksView.blockHeight
+        let gap = AccountBlocksView.blockGap
+        return 16 + CGFloat(accountCount) * blockHeight + CGFloat(max(0, accountCount - 1)) * gap
     }
 
     private var topContentCenterY: CGFloat {
@@ -954,8 +999,194 @@ final class IslandView: NSView {
     private static let pinButtonSize = NSSize(width: 18, height: 18)
     private static let pinButtonGap: CGFloat = 8
     private static let settingsButtonGap: CGFloat = 6
-    private static let expandedPullHeight: CGFloat = 76
+    private static let maxExpandedAccounts = 4
     private static let labelFont = NSFont.monospacedSystemFont(ofSize: 11, weight: .semibold)
+}
+
+final class AccountBlocksView: NSView {
+    static let blockHeight: CGFloat = 74
+    static let blockGap: CGFloat = 8
+
+    var accounts: [CodexAccountUsageSnapshot] = [] {
+        didSet {
+            needsDisplay = true
+        }
+    }
+
+    override var isOpaque: Bool {
+        false
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+
+        guard !accounts.isEmpty else {
+            drawEmptyState()
+            return
+        }
+
+        let ordered = accounts.sorted {
+            if $0.isCurrent != $1.isCurrent { return $0.isCurrent }
+            return ($0.updatedAt ?? .distantPast) > ($1.updatedAt ?? .distantPast)
+        }
+
+        var y = bounds.maxY - Self.blockHeight
+        for account in ordered.prefix(4) {
+            drawBlock(account, in: NSRect(x: 0, y: y, width: bounds.width, height: Self.blockHeight))
+            y -= Self.blockHeight + Self.blockGap
+        }
+    }
+
+    private func drawEmptyState() {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .center
+        let text = NSAttributedString(
+            string: "No saved Codex accounts yet",
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 11, weight: .medium),
+                .foregroundColor: NSColor.white.withAlphaComponent(0.48),
+                .paragraphStyle: paragraph,
+            ])
+        text.draw(in: bounds.insetBy(dx: 10, dy: max(0, bounds.height / 2 - 8)))
+    }
+
+    private func drawBlock(_ account: CodexAccountUsageSnapshot, in rect: NSRect) {
+        let block = NSBezierPath(roundedRect: rect, xRadius: 14, yRadius: 14)
+        NSColor.white.withAlphaComponent(account.isCurrent ? 0.105 : 0.075).setFill()
+        block.fill()
+
+        NSColor.white.withAlphaComponent(account.isCurrent ? 0.18 : 0.10).setStroke()
+        block.lineWidth = 1
+        block.stroke()
+
+        drawTitle(account.label, plan: account.plan, in: rect)
+        drawMetric(
+            title: "5h",
+            percent: account.rateLimits.fiveHourRemainingPercent,
+            resetAt: account.rateLimits.fiveHourResetAt,
+            in: NSRect(x: rect.minX + 12, y: rect.minY + 28, width: rect.width - 24, height: 14))
+        drawMetric(
+            title: "7d",
+            percent: account.rateLimits.weeklyRemainingPercent,
+            resetAt: account.rateLimits.weeklyResetAt,
+            in: NSRect(x: rect.minX + 12, y: rect.minY + 10, width: rect.width - 24, height: 14))
+    }
+
+    private func drawTitle(_ title: String, plan: String?, in rect: NSRect) {
+        let resolvedChipSize = plan.map { chipSize(for: $0) } ?? NSSize.zero
+        let value = truncated(title, maxLength: 38)
+        let attributed = NSAttributedString(
+            string: value,
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
+                .foregroundColor: NSColor.white.withAlphaComponent(0.88),
+            ])
+        let titleOrigin = NSPoint(x: rect.minX + 12, y: rect.maxY - 23)
+        let titleWidth = min(
+            ceil(attributed.size().width),
+            max(40, rect.width - 24 - (plan == nil ? 0 : resolvedChipSize.width + 7)))
+        attributed.draw(in: NSRect(
+            x: titleOrigin.x,
+            y: titleOrigin.y,
+            width: titleWidth,
+            height: 14))
+
+        if let plan {
+            drawChip(plan, size: resolvedChipSize, in: NSRect(
+                x: titleOrigin.x + titleWidth + 7,
+                y: rect.maxY - 24,
+                width: resolvedChipSize.width,
+                height: resolvedChipSize.height))
+        }
+    }
+
+    private func chipSize(for text: String) -> NSSize {
+        let size = (text as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 8, weight: .bold)])
+        return NSSize(width: ceil(size.width) + 12, height: 15)
+    }
+
+    private func drawChip(_ text: String, size: NSSize, in rect: NSRect) {
+        let path = NSBezierPath(roundedRect: rect, xRadius: rect.height / 2, yRadius: rect.height / 2)
+        NSColor.systemBlue.withAlphaComponent(0.24).setFill()
+        path.fill()
+        NSColor.systemBlue.withAlphaComponent(0.38).setStroke()
+        path.lineWidth = 0.8
+        path.stroke()
+
+        let attributed = NSAttributedString(
+            string: text,
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 8, weight: .bold),
+                .foregroundColor: NSColor.white.withAlphaComponent(0.82),
+            ])
+        let textSize = attributed.size()
+        attributed.draw(at: NSPoint(
+            x: rect.midX - textSize.width / 2,
+            y: rect.midY - textSize.height / 2))
+    }
+
+    private func drawMetric(title: String, percent: Int?, resetAt: Date?, in rect: NSRect) {
+        let percentText = percent.map { "\(min(100, max(0, $0)))%" } ?? "--%"
+        let resetText = resetAt.map { "resets \(Self.countdown(to: $0))" } ?? "reset --"
+        let label = NSAttributedString(
+            string: "\(title) \(percentText)",
+            attributes: [
+                .font: NSFont.monospacedSystemFont(ofSize: 10, weight: .semibold),
+                .foregroundColor: NSColor.white.withAlphaComponent(0.78),
+            ])
+        let reset = NSAttributedString(
+            string: resetText,
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 9, weight: .medium),
+                .foregroundColor: NSColor.white.withAlphaComponent(0.42),
+            ])
+
+        label.draw(in: NSRect(x: rect.minX, y: rect.minY + 1, width: 50, height: rect.height))
+        reset.draw(in: NSRect(x: rect.maxX - 86, y: rect.minY + 2, width: 86, height: rect.height))
+
+        let trackRect = NSRect(x: rect.minX + 54, y: rect.minY + 4, width: max(0, rect.width - 146), height: 6)
+        let track = NSBezierPath(roundedRect: trackRect, xRadius: 3, yRadius: 3)
+        NSColor.white.withAlphaComponent(0.10).setFill()
+        track.fill()
+
+        guard let percent else { return }
+        let ratio = CGFloat(min(100, max(0, percent))) / 100
+        let fillRect = NSRect(x: trackRect.minX, y: trackRect.minY, width: max(5, trackRect.width * ratio), height: trackRect.height)
+        let fill = NSBezierPath(roundedRect: fillRect, xRadius: 3, yRadius: 3)
+        Self.percentColor(percent).withAlphaComponent(0.88).setFill()
+        fill.fill()
+    }
+
+    private static func percentColor(_ percent: Int) -> NSColor {
+        if percent >= 60 {
+            return .systemGreen
+        }
+        if percent >= 20 {
+            return .systemOrange
+        }
+        return .systemRed
+    }
+
+    private static func countdown(to date: Date, now: Date = Date()) -> String {
+        let seconds = max(0, Int(date.timeIntervalSince(now)))
+        let days = seconds / 86_400
+        let hours = (seconds % 86_400) / 3_600
+        let minutes = (seconds % 3_600) / 60
+        if days > 0 {
+            return "\(days)d \(hours)h"
+        }
+        if hours > 0 {
+            return "\(hours)h \(minutes)m"
+        }
+        return "\(minutes)m"
+    }
+
+    private func truncated(_ value: String, maxLength: Int) -> String {
+        guard value.count > maxLength else { return value }
+        let head = value.prefix(maxLength - 8)
+        let tail = value.suffix(5)
+        return "\(head)...\(tail)"
+    }
 }
 
 final class RollingTextLabel: NSView {
