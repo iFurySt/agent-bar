@@ -251,6 +251,7 @@ final class IslandWindowController {
         let mouseLocation = NSEvent.mouseLocation
         for overlay in overlays {
             let isHovered = isMouseHovering(overlay, at: mouseLocation)
+            let hoverChanged = overlay.isHovered != isHovered
             if overlay.isHovered != isHovered {
                 overlay.isHovered = isHovered
                 overlay.view.setHovering(isHovered)
@@ -258,9 +259,15 @@ final class IslandWindowController {
             }
 
             let shouldCollapse = shouldCollapse(overlay)
-            guard overlay.isCollapsed != shouldCollapse else { continue }
-            overlay.isCollapsed = shouldCollapse
-            position(overlay, animated: animated)
+            if overlay.isCollapsed != shouldCollapse {
+                overlay.isCollapsed = shouldCollapse
+                position(overlay, animated: animated)
+                continue
+            }
+
+            if hoverChanged {
+                position(overlay, animated: animated)
+            }
         }
     }
 
@@ -272,10 +279,11 @@ final class IslandWindowController {
     }
 
     private func isMouseHovering(_ overlay: ScreenOverlay, at point: NSPoint) -> Bool {
-        guard overlay.autoHideEligible else { return false }
         if overlay.panel.frame.insetBy(dx: -8, dy: -8).contains(point) {
             return true
         }
+
+        guard overlay.autoHideEligible else { return false }
 
         let visibleFrame = overlay.visibleFrame.isEmpty ? overlay.panel.frame : overlay.visibleFrame
         let revealWidth = max(visibleFrame.width + 32, 220)
@@ -386,6 +394,7 @@ final class IslandView: NSView {
     private var showsPin = false
     private var showsSettings = false
     private var isHovering = false
+    private var controlsVisible = false
     private var style: Style = .attachedBar(height: 32, showsPin: false)
     var onPinToggle: (() -> Void)?
     var onSettingsOpen: ((NSView) -> Void)?
@@ -484,6 +493,8 @@ final class IslandView: NSView {
     func setHovering(_ hovering: Bool) {
         guard hovering != isHovering else { return }
         isHovering = hovering
+        scheduleControlVisibility(forHovering: hovering)
+        needsLayout = true
     }
 
     func configure(_ style: Style) {
@@ -513,10 +524,8 @@ final class IslandView: NSView {
             notchGapWidth = gapWidth
             self.showsPin = showsPin
             self.showsSettings = showsSettings
-            pinButton.isHidden = !showsPin
-            pinButton.alphaValue = showsPin ? 1 : 0
-            settingsButton.isHidden = !showsSettings
-            settingsButton.alphaValue = showsSettings ? 1 : 0
+            controlsVisible = false
+            updateControlVisibility()
             layer?.backgroundColor = NSColor.clear.cgColor
             layer?.cornerRadius = 0
             quotaLabel.lineBreakMode = .byClipping
@@ -544,7 +553,7 @@ final class IslandView: NSView {
             let iconGap: CGFloat = 8
             let labelSafety: CGFloat = 10
             let leftContentWidth = iconWidth + iconGap + ceil(quotaLabel.intrinsicContentSize.width)
-            let rightContentWidth = ceil(usageLabel.intrinsicContentSize.width) + actionSlotWidth
+            let rightContentWidth = ceil(usageLabel.intrinsicContentSize.width) + activeActionSlotWidth
             let leftWidth = ceil(horizontalPadding + leftContentWidth + notchInnerPadding)
             let rightWidth = ceil(notchInnerPadding + rightContentWidth + labelSafety + horizontalPadding)
             notchLeftLaneWidth = leftWidth
@@ -593,10 +602,7 @@ final class IslandView: NSView {
         let iconWidth = iconViewSize.width
         let iconGap: CGFloat = 8
         let labelSafety: CGFloat = 10
-        let actionWidth = actionSlotWidth
         let quotaWidth = ceil(quotaLabel.intrinsicContentSize.width)
-        let actionSlotX = bounds.maxX - horizontalPadding - actionWidth
-        let usageMaxX = actionSlotX
         let leftContentWidth = iconWidth + iconGap + quotaWidth
         let leftContentX = max(horizontalPadding, gapStart - notchInnerPadding - leftContentWidth)
 
@@ -610,13 +616,14 @@ final class IslandView: NSView {
 
         let usageWidth = ceil(usageLabel.intrinsicContentSize.width)
         let usageX = gapEnd + notchInnerPadding
+        let usageFrameWidth = usageWidth + labelSafety
         usageLabel.frame = NSRect(
             x: usageX,
             y: labelY,
-            width: min(usageWidth + labelSafety, max(0, usageMaxX - usageX)),
+            width: usageFrameWidth,
             height: textHeight)
 
-        guard showsPin || showsSettings else {
+        guard controlsVisible && (showsPin || showsSettings) else {
             return
         }
 
@@ -626,7 +633,7 @@ final class IslandView: NSView {
         switch (showsPin, showsSettings) {
         case (true, true):
             pinButton.frame = NSRect(
-                x: actionSlotX + Self.pinButtonGap,
+                x: usageLabel.frame.maxX + Self.pinButtonGap,
                 y: buttonY,
                 width: size.width,
                 height: size.height)
@@ -638,7 +645,7 @@ final class IslandView: NSView {
         case (false, true):
             pinButton.frame = .zero
             settingsButton.frame = NSRect(
-                x: actionSlotX + Self.pinButtonGap,
+                x: usageLabel.frame.maxX + Self.pinButtonGap,
                 y: buttonY,
                 width: size.width,
                 height: size.height)
@@ -651,6 +658,7 @@ final class IslandView: NSView {
     private func layoutPinButton(after x: CGFloat, centerY: CGFloat) {
         guard showsPin else {
             pinButton.frame = .zero
+            settingsButton.frame = .zero
             return
         }
 
@@ -665,6 +673,45 @@ final class IslandView: NSView {
             y: pinButton.frame.minY,
             width: size.width,
             height: size.height)
+    }
+
+    private func updateControlVisibility() {
+        switch style {
+        case .attachedBar:
+            pinButton.isHidden = !showsPin
+            pinButton.alphaValue = showsPin ? 1 : 0
+            settingsButton.isHidden = !showsPin
+            settingsButton.alphaValue = showsPin ? 1 : 0
+        case .notch:
+            let showPinControl = showsPin && controlsVisible
+            let showSettingsControl = showsSettings && controlsVisible
+            pinButton.isHidden = !showPinControl
+            pinButton.alphaValue = showPinControl ? 1 : 0
+            settingsButton.isHidden = !showSettingsControl
+            settingsButton.alphaValue = showSettingsControl ? 1 : 0
+        }
+    }
+
+    private func scheduleControlVisibility(forHovering hovering: Bool) {
+        guard case .notch = style else {
+            controlsVisible = hovering
+            updateControlVisibility()
+            return
+        }
+
+        guard hovering else {
+            controlsVisible = false
+            updateControlVisibility()
+            return
+        }
+
+        let delay = DispatchTime.now() + .milliseconds(150)
+        DispatchQueue.main.asyncAfter(deadline: delay) { [weak self] in
+            guard let self, self.isHovering else { return }
+            self.controlsVisible = true
+            self.updateControlVisibility()
+            self.needsLayout = true
+        }
     }
 
     @objc private func pinButtonPressed() {
@@ -825,6 +872,10 @@ final class IslandView: NSView {
         }
 
         return pinSlotWidth
+    }
+
+    private var activeActionSlotWidth: CGFloat {
+        isHovering ? actionSlotWidth : 0
     }
 
     private static let iconViewSize = NSSize(width: 16, height: 16)
