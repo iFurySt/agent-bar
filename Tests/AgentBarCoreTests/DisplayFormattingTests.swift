@@ -21,5 +21,6 @@ final class DisplayFormattingTests: XCTestCase {
         XCTAssertEqual(AgentBarDisplayFormatting.tokens(12_400), "12.4K")
         XCTAssertEqual(AgentBarDisplayFormatting.tokens(293_000_000), "293M")
         XCTAssertEqual(AgentBarDisplayFormatting.tokens(3_300_000_000), "3.3B")
+        XCTAssertEqual(AgentBarDisplayFormatting.tokens(9_161_800_000), "9.2B")
     }
 }

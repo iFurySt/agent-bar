@@ -183,7 +183,10 @@ final class IslandWindowController {
                 self?.togglePinned()
             }
             overlay.view.onSettingsOpen = { [weak self] anchor in
-                self?.toggleSettings(relativeTo: anchor)
+                self?.toggleSettings(relativeTo: anchor, page: .general)
+            }
+            overlay.view.onAccountsOpen = { [weak self] anchor in
+                self?.toggleSettings(relativeTo: anchor, page: .accounts)
             }
             overlay.view.onExpansionToggle = { [weak self, weak overlay] in
                 guard let self, let overlay else { return }
@@ -220,6 +223,7 @@ final class IslandWindowController {
                 duration: contentUpdateAnimationDuration)
         }
         updateHoverState(animated: false)
+        settingsWindowController?.refreshAccounts()
     }
 
     private func position(_ overlay: ScreenOverlay, animated: Bool, duration: TimeInterval? = nil) {
@@ -467,12 +471,20 @@ final class IslandWindowController {
         }
     }
 
-    private func toggleSettings(relativeTo anchor: NSView) {
+    private func toggleSettings(relativeTo anchor: NSView, page: SettingsPage = .general) {
         let controller: AgentBarSettingsWindowController
         if let existingController = settingsWindowController {
             controller = existingController
         } else {
-            let newController = AgentBarSettingsWindowController(updater: updater, preferences: preferences)
+            let newController = AgentBarSettingsWindowController(
+                updater: updater,
+                preferences: preferences,
+                accountsProvider: { [weak self] in
+                    self?.accountsForSettings() ?? []
+                },
+                onAccountSwitch: { [weak self] accountID in
+                    self?.switchAccount(accountID)
+                })
             newController.onClose = { [weak self] in
                 self?.settingsAnchor = nil
                 NSApp.setActivationPolicy(.accessory)
@@ -484,8 +496,18 @@ final class IslandWindowController {
         settingsAnchor = anchor
         NSApp.setActivationPolicy(.regular)
         AgentBarAppIcon.refreshDockTile()
-        controller.showSettings()
+        controller.showSettings(page: page)
         updateHoverState(animated: true)
+    }
+
+    private func accountsForSettings() -> [CodexAccountUsageSnapshot] {
+        if !currentAccounts.isEmpty {
+            return currentAccounts
+        }
+        if let cachedAccounts = snapshotService.cachedSnapshot()?.accounts, !cachedAccounts.isEmpty {
+            return cachedAccounts
+        }
+        return snapshotService.cachedAccounts()
     }
 
     private func isSettingsOpen(for overlay: ScreenOverlay) -> Bool {
@@ -571,6 +593,7 @@ final class IslandView: NSView {
     private var style: Style = .attachedBar(height: 32, showsPin: false)
     var onPinToggle: (() -> Void)?
     var onSettingsOpen: ((NSView) -> Void)?
+    var onAccountsOpen: ((NSView) -> Void)?
     var onExpansionToggle: (() -> Void)?
     var onAccountSwitch: ((String) -> Void)?
 
@@ -600,6 +623,10 @@ final class IslandView: NSView {
         addSubview(settingsButton)
         accountsView.onAccountSelected = { [weak self] accountID in
             self?.onAccountSwitch?(accountID)
+        }
+        accountsView.onMoreAccounts = { [weak self] in
+            guard let self else { return }
+            onAccountsOpen?(self)
         }
         pinButton.target = self
         pinButton.action = #selector(pinButtonPressed)
@@ -669,7 +696,7 @@ final class IslandView: NSView {
     }
 
     func update(accounts: [CodexAccountUsageSnapshot]) {
-        accountsView.accounts = Array(accounts.prefix(Self.maxExpandedAccounts))
+        accountsView.accounts = accounts
         needsLayout = true
         needsDisplay = true
     }
@@ -1137,7 +1164,8 @@ final class IslandView: NSView {
         let accountCount = max(1, min(accountsView.accounts.count, Self.maxExpandedAccounts))
         let blockHeight = AccountBlocksView.blockHeight
         let gap = AccountBlocksView.blockGap
-        return 16 + CGFloat(accountCount) * blockHeight + CGFloat(max(0, accountCount - 1)) * gap
+        let footerHeight = accountsView.hasMoreAccounts ? AccountBlocksView.moreRowHeight + gap : 0
+        return 16 + CGFloat(accountCount) * blockHeight + CGFloat(max(0, accountCount - 1)) * gap + footerHeight
     }
 
     private var topContentCenterY: CGFloat {
@@ -1155,6 +1183,7 @@ final class IslandView: NSView {
 final class AccountBlocksView: NSView {
     static let blockHeight: CGFloat = 74
     static let blockGap: CGFloat = 8
+    static let moreRowHeight: CGFloat = 28
 
     var accounts: [CodexAccountUsageSnapshot] = [] {
         willSet {
@@ -1166,6 +1195,10 @@ final class AccountBlocksView: NSView {
         }
     }
     var onAccountSelected: ((String) -> Void)?
+    var onMoreAccounts: (() -> Void)?
+    var hasMoreAccounts: Bool {
+        accounts.count > Self.visibleAccountLimit
+    }
     private var previousFrames: [String: NSRect] = [:]
     private var animationStart: CFTimeInterval?
     private var animationTimer: Timer?
@@ -1186,7 +1219,7 @@ final class AccountBlocksView: NSView {
         let targetFrames = layoutFramesForOrderedAccounts(ordered)
         let progress = animationProgress()
 
-        for account in ordered.prefix(4) {
+        for account in visibleAccounts(ordered) {
             let target = targetFrames[account.id] ?? .zero
             let frame: NSRect
             if progress < 1, let previous = previousFrames[account.id] {
@@ -1196,11 +1229,18 @@ final class AccountBlocksView: NSView {
             }
             drawBlock(account, in: frame)
         }
+        if hasMoreAccounts {
+            drawMoreRow(in: moreRowRect())
+        }
     }
 
     override func mouseDown(with event: NSEvent) {
         let location = convert(event.locationInWindow, from: nil)
         guard let account = switchableAccount(at: location) else {
+            if hasMoreAccounts, moreRowRect().contains(location) {
+                onMoreAccounts?()
+                return
+            }
             super.mouseDown(with: event)
             return
         }
@@ -1210,15 +1250,18 @@ final class AccountBlocksView: NSView {
     override func resetCursorRects() {
         super.resetCursorRects()
         let frames = layoutFrames(for: accounts)
-        for account in orderedAccounts(accounts).prefix(4) where !account.isCurrent {
+        for account in visibleAccounts(orderedAccounts(accounts)) where !account.isCurrent {
             guard let rect = frames[account.id] else { continue }
             addCursorRect(switchButtonRect(for: account, in: rect), cursor: .pointingHand)
+        }
+        if hasMoreAccounts {
+            addCursorRect(moreRowRect(), cursor: .pointingHand)
         }
     }
 
     private func switchableAccount(at point: NSPoint) -> CodexAccountUsageSnapshot? {
         let frames = layoutFrames(for: accounts)
-        for account in orderedAccounts(accounts).prefix(4) {
+        for account in visibleAccounts(orderedAccounts(accounts)) {
             guard let rect = frames[account.id] else { continue }
             if !account.isCurrent, switchButtonRect(for: account, in: rect).contains(point) {
                 return account
@@ -1234,6 +1277,10 @@ final class AccountBlocksView: NSView {
         }
     }
 
+    private func visibleAccounts(_ ordered: [CodexAccountUsageSnapshot]) -> ArraySlice<CodexAccountUsageSnapshot> {
+        ordered.prefix(Self.visibleAccountLimit)
+    }
+
     private func layoutFrames(for value: [CodexAccountUsageSnapshot]) -> [String: NSRect] {
         layoutFramesForOrderedAccounts(orderedAccounts(value))
     }
@@ -1241,7 +1288,7 @@ final class AccountBlocksView: NSView {
     private func layoutFramesForOrderedAccounts(_ ordered: [CodexAccountUsageSnapshot]) -> [String: NSRect] {
         var frames: [String: NSRect] = [:]
         var y = bounds.maxY - Self.blockHeight
-        for account in ordered.prefix(4) {
+        for account in visibleAccounts(ordered) {
             frames[account.id] = NSRect(x: 0, y: y, width: bounds.width, height: Self.blockHeight)
             y -= Self.blockHeight + Self.blockGap
         }
@@ -1252,8 +1299,8 @@ final class AccountBlocksView: NSView {
         from oldAccounts: [CodexAccountUsageSnapshot],
         to newAccounts: [CodexAccountUsageSnapshot])
     {
-        let oldOrder = orderedAccounts(oldAccounts).prefix(4).map(\.id)
-        let newOrder = orderedAccounts(newAccounts).prefix(4).map(\.id)
+        let oldOrder = visibleAccounts(orderedAccounts(oldAccounts)).map(\.id)
+        let newOrder = visibleAccounts(orderedAccounts(newAccounts)).map(\.id)
         guard oldOrder != newOrder, !oldOrder.isEmpty else {
             stopAnimationTimer()
             animationStart = nil
@@ -1310,6 +1357,44 @@ final class AccountBlocksView: NSView {
                 .paragraphStyle: paragraph,
             ])
         text.draw(in: bounds.insetBy(dx: 10, dy: max(0, bounds.height / 2 - 8)))
+    }
+
+    private func drawMoreRow(in rect: NSRect) {
+        let path = NSBezierPath(roundedRect: rect, xRadius: 9, yRadius: 9)
+        NSColor.white.withAlphaComponent(0.055).setFill()
+        path.fill()
+
+        let hiddenCount = max(0, accounts.count - Self.visibleAccountLimit)
+        let countText = hiddenCount == 1 ? "1 more" : "\(hiddenCount) more"
+        let titleAttributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 10.8, weight: .medium),
+            .foregroundColor: NSColor.white.withAlphaComponent(0.72),
+        ]
+        let detailAttributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 10.2, weight: .regular),
+            .foregroundColor: NSColor.white.withAlphaComponent(0.38),
+        ]
+        let title = NSAttributedString(string: "All Accounts", attributes: titleAttributes)
+        let detail = NSAttributedString(string: countText, attributes: detailAttributes)
+        let titleSize = title.size()
+        let detailSize = detail.size()
+
+        let iconRect = NSRect(x: rect.minX + 12, y: rect.midY - 5.5, width: 11, height: 11)
+        let chevronRect = NSRect(x: rect.maxX - 22, y: rect.midY - 4.5, width: 9, height: 9)
+        drawSymbol("person.2", color: NSColor.white.withAlphaComponent(0.56), in: iconRect)
+        title.draw(at: NSPoint(x: iconRect.maxX + 8, y: rect.midY - titleSize.height / 2))
+        detail.draw(at: NSPoint(x: chevronRect.minX - detailSize.width - 8, y: rect.midY - detailSize.height / 2))
+        drawSymbol("chevron.right", color: NSColor.white.withAlphaComponent(0.34), in: chevronRect)
+    }
+
+    private func moreRowRect() -> NSRect {
+        let visibleCount = max(1, min(accounts.count, Self.visibleAccountLimit))
+        let y = bounds.maxY
+            - CGFloat(visibleCount) * Self.blockHeight
+            - CGFloat(max(0, visibleCount - 1)) * Self.blockGap
+            - Self.blockGap
+            - Self.moreRowHeight
+        return NSRect(x: 0, y: y, width: bounds.width, height: Self.moreRowHeight)
     }
 
     private func drawBlock(_ account: CodexAccountUsageSnapshot, in rect: NSRect) {
@@ -1533,6 +1618,7 @@ final class AccountBlocksView: NSView {
     }
 
     private static let reorderAnimationDuration: TimeInterval = 0.28
+    private static let visibleAccountLimit = 4
     private static let switchButtonWidth: CGFloat = 24
     private static let switchButtonHeight: CGFloat = 15
 

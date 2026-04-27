@@ -73,6 +73,22 @@ public final class CodexSnapshotService: @unchecked Sendable {
 
     public func cachedAccounts() -> [CodexAccountUsageSnapshot] {
         let currentID = try? CodexAuthStore.load().stableAccountID
+        let snapshotAccounts = cacheStore.load().latestSnapshot?.accounts ?? []
+        if !snapshotAccounts.isEmpty {
+            return snapshotAccounts.map { account in
+                CodexAccountUsageSnapshot(
+                    id: account.id,
+                    label: account.label,
+                    rateLimits: account.rateLimits,
+                    isCurrent: account.id == currentID,
+                    updatedAt: account.updatedAt,
+                    plan: account.plan)
+            }.sorted {
+                if $0.isCurrent != $1.isCurrent { return $0.isCurrent }
+                return ($0.updatedAt ?? .distantPast) > ($1.updatedAt ?? .distantPast)
+            }
+        }
+
         return CodexAccountStore.load().map { account in
             CodexAccountUsageSnapshot(
                 id: account.id,

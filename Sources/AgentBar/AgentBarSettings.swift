@@ -2,8 +2,9 @@ import AppKit
 import AgentBarCore
 import ServiceManagement
 
-fileprivate enum SettingsPage {
+enum SettingsPage {
     case general
+    case accounts
     case usage
     case about
 }
@@ -11,9 +12,20 @@ fileprivate enum SettingsPage {
 @MainActor
 final class AgentBarSettingsWindowController: NSWindowController, NSWindowDelegate {
     var onClose: (() -> Void)?
+    private let settingsViewController: AgentBarSettingsViewController
 
-    init(updater: AgentBarUpdater, preferences: AgentBarPreferences) {
-        let contentViewController = AgentBarSettingsViewController(updater: updater, preferences: preferences)
+    init(
+        updater: AgentBarUpdater,
+        preferences: AgentBarPreferences,
+        accountsProvider: @escaping () -> [CodexAccountUsageSnapshot],
+        onAccountSwitch: @escaping (String) -> Void)
+    {
+        let contentViewController = AgentBarSettingsViewController(
+            updater: updater,
+            preferences: preferences,
+            accountsProvider: accountsProvider)
+        contentViewController.onAccountSwitch = onAccountSwitch
+        settingsViewController = contentViewController
         let window = AgentBarSettingsWindow(
             contentRect: NSRect(x: 0, y: 0, width: 760, height: 420),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -40,14 +52,19 @@ final class AgentBarSettingsWindowController: NSWindowController, NSWindowDelega
         window?.isVisible == true
     }
 
-    func showSettings() {
+    func showSettings(page: SettingsPage = .general) {
         guard let window else { return }
+        settingsViewController.showPage(page)
         NSApp.activate(ignoringOtherApps: true)
         if !window.isVisible {
             window.center()
         }
         showWindow(nil)
         window.makeKeyAndOrderFront(nil)
+    }
+
+    func refreshAccounts() {
+        settingsViewController.refreshAccounts()
     }
 
     func windowWillClose(_: Notification) {
@@ -69,8 +86,11 @@ final class AgentBarSettingsWindow: NSWindow {
 
 @MainActor
 final class AgentBarSettingsViewController: NSViewController {
+    var onAccountSwitch: ((String) -> Void)?
+
     private let updater: AgentBarUpdater
     private let preferences: AgentBarPreferences
+    private let accountsProvider: () -> [CodexAccountUsageSnapshot]
     private let launchAtLogin = AgentBarLaunchAtLoginController()
     private let launchAtLoginSwitch = SettingsSwitch()
     private let automaticUpdatesSwitch = SettingsSwitch()
@@ -79,19 +99,32 @@ final class AgentBarSettingsViewController: NSViewController {
     private let sidebar = SettingsSidebarView()
     private let titleLabel = NSTextField(labelWithString: "General")
     private let generalCard = SettingsCardView()
+    private let accountsCard = SettingsCardView()
+    private let accountsListView = SettingsAccountsListView()
+    private let accountsSummaryLabel = NSTextField(labelWithString: "Saved Codex accounts")
+    private var accountsListHeightConstraint: NSLayoutConstraint?
+    private var accountsScrollHeightConstraint: NSLayoutConstraint?
     private let usageCard = SettingsCardView()
     private let usageHeatmapView = TokenUsageHeatmapView()
+    private let usageTooltipOverlayView = UsageTooltipOverlayView()
     private let usageSummaryLabel = NSTextField(labelWithString: "Scanning local Codex sessions...")
+    private var usageHeaderContainer: NSView?
     private let usagePreviousYearButton = SettingsIconButton(symbolName: "chevron.left", accessibilityDescription: "Previous year")
     private let usageNextYearButton = SettingsIconButton(symbolName: "chevron.right", accessibilityDescription: "Next year")
     private let usageYearLabel = NSTextField(labelWithString: "")
     private var selectedUsageYear = Calendar.current.component(.year, from: Date())
     private var usageYearRange = Calendar.current.component(.year, from: Date())...Calendar.current.component(.year, from: Date())
     private let aboutCard = SettingsCardView()
+    private var selectedPage: SettingsPage = .general
 
-    init(updater: AgentBarUpdater, preferences: AgentBarPreferences) {
+    init(
+        updater: AgentBarUpdater,
+        preferences: AgentBarPreferences,
+        accountsProvider: @escaping () -> [CodexAccountUsageSnapshot])
+    {
         self.updater = updater
         self.preferences = preferences
+        self.accountsProvider = accountsProvider
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -118,6 +151,7 @@ final class AgentBarSettingsViewController: NSViewController {
         let updatesRow = settingsRow(title: "Automatic Updates", control: automaticUpdatesSwitch)
         let separator2 = InsetSeparatorView(inset: 14)
         let autoCollapseRow = autoCollapseDelayRow()
+        let accountsHeader = accountsHeaderView()
         let usageHeader = usageHeaderView()
         let githubRow = SettingsLinkRowView(
             title: "GitHub Repository",
@@ -136,10 +170,38 @@ final class AgentBarSettingsViewController: NSViewController {
         cardStack.translatesAutoresizingMaskIntoConstraints = false
         generalCard.addSubview(cardStack)
 
-        let usageStack = NSStackView(views: [usageHeader, usageHeatmapView])
+        accountsListView.onAccountSelected = { [weak self] accountID in
+            self?.switchAccount(accountID)
+        }
+        let accountsScrollView = NSScrollView()
+        accountsScrollView.drawsBackground = false
+        accountsScrollView.hasVerticalScroller = true
+        accountsScrollView.autohidesScrollers = true
+        accountsListView.translatesAutoresizingMaskIntoConstraints = false
+        accountsScrollView.documentView = accountsListView
+        accountsScrollView.translatesAutoresizingMaskIntoConstraints = false
+
+        let accountsStack = NSStackView(views: [accountsScrollView])
+        accountsStack.orientation = .vertical
+        accountsStack.alignment = .leading
+        accountsStack.spacing = 0
+        accountsStack.translatesAutoresizingMaskIntoConstraints = false
+        accountsCard.addSubview(accountsStack)
+
+        usageHeaderContainer = usageHeader
+        usageHeatmapView.onHoverChanged = { [weak self] rect, entry in
+            guard let self, let rect, let entry else {
+                self?.usageTooltipOverlayView.hoveredItem = nil
+                return
+            }
+            usageTooltipOverlayView.hoveredItem = (
+                rect: usageHeatmapView.convert(rect, to: usageTooltipOverlayView),
+                entry: entry)
+        }
+        let usageStack = NSStackView(views: [usageHeatmapView])
         usageStack.orientation = .vertical
         usageStack.alignment = .leading
-        usageStack.spacing = 14
+        usageStack.spacing = 0
         usageStack.translatesAutoresizingMaskIntoConstraints = false
         usageCard.addSubview(usageStack)
 
@@ -155,10 +217,26 @@ final class AgentBarSettingsViewController: NSViewController {
         rootView.addSubview(contentView)
         contentView.addSubview(titleLabel)
         contentView.addSubview(generalCard)
+        contentView.addSubview(accountsHeader)
+        contentView.addSubview(accountsCard)
+        contentView.addSubview(usageHeader)
         contentView.addSubview(usageCard)
         contentView.addSubview(aboutCard)
+        contentView.addSubview(usageTooltipOverlayView)
 
-        for view in [sidebar, sidebarDivider, contentView, titleLabel, generalCard, usageCard, aboutCard] {
+        for view in [
+            sidebar,
+            sidebarDivider,
+            contentView,
+            titleLabel,
+            generalCard,
+            accountsHeader,
+            accountsCard,
+            usageHeader,
+            usageCard,
+            aboutCard,
+            usageTooltipOverlayView,
+        ] {
             view.translatesAutoresizingMaskIntoConstraints = false
         }
 
@@ -187,7 +265,19 @@ final class AgentBarSettingsViewController: NSViewController {
 
             usageCard.leadingAnchor.constraint(equalTo: generalCard.leadingAnchor),
             usageCard.trailingAnchor.constraint(equalTo: generalCard.trailingAnchor),
-            usageCard.topAnchor.constraint(equalTo: generalCard.topAnchor),
+            usageCard.topAnchor.constraint(equalTo: usageHeader.bottomAnchor, constant: 10),
+
+            usageHeader.leadingAnchor.constraint(equalTo: generalCard.leadingAnchor, constant: 8),
+            usageHeader.trailingAnchor.constraint(equalTo: generalCard.trailingAnchor, constant: -8),
+            usageHeader.topAnchor.constraint(equalTo: generalCard.topAnchor),
+
+            accountsHeader.leadingAnchor.constraint(equalTo: generalCard.leadingAnchor, constant: 8),
+            accountsHeader.trailingAnchor.constraint(equalTo: generalCard.trailingAnchor, constant: -8),
+            accountsHeader.topAnchor.constraint(equalTo: generalCard.topAnchor),
+
+            accountsCard.leadingAnchor.constraint(equalTo: generalCard.leadingAnchor),
+            accountsCard.trailingAnchor.constraint(equalTo: generalCard.trailingAnchor),
+            accountsCard.topAnchor.constraint(equalTo: accountsHeader.bottomAnchor, constant: 10),
 
             aboutCard.leadingAnchor.constraint(equalTo: generalCard.leadingAnchor),
             aboutCard.trailingAnchor.constraint(equalTo: generalCard.trailingAnchor),
@@ -197,6 +287,13 @@ final class AgentBarSettingsViewController: NSViewController {
             cardStack.trailingAnchor.constraint(equalTo: generalCard.trailingAnchor),
             cardStack.topAnchor.constraint(equalTo: generalCard.topAnchor),
             cardStack.bottomAnchor.constraint(equalTo: generalCard.bottomAnchor),
+
+            accountsStack.leadingAnchor.constraint(equalTo: accountsCard.leadingAnchor),
+            accountsStack.trailingAnchor.constraint(equalTo: accountsCard.trailingAnchor),
+            accountsStack.topAnchor.constraint(equalTo: accountsCard.topAnchor),
+            accountsStack.bottomAnchor.constraint(equalTo: accountsCard.bottomAnchor),
+            accountsScrollView.widthAnchor.constraint(equalTo: accountsStack.widthAnchor),
+            accountsListView.widthAnchor.constraint(equalTo: accountsScrollView.contentView.widthAnchor),
 
             aboutStack.leadingAnchor.constraint(equalTo: aboutCard.leadingAnchor),
             aboutStack.trailingAnchor.constraint(equalTo: aboutCard.trailingAnchor),
@@ -218,16 +315,27 @@ final class AgentBarSettingsViewController: NSViewController {
             usageStack.trailingAnchor.constraint(equalTo: usageCard.trailingAnchor, constant: -16),
             usageStack.topAnchor.constraint(equalTo: usageCard.topAnchor, constant: 16),
             usageStack.bottomAnchor.constraint(equalTo: usageCard.bottomAnchor, constant: -16),
-            usageHeader.widthAnchor.constraint(equalTo: usageStack.widthAnchor),
             usageHeatmapView.widthAnchor.constraint(lessThanOrEqualTo: usageStack.widthAnchor),
-            usageHeatmapView.heightAnchor.constraint(equalToConstant: 190),
+            usageHeatmapView.heightAnchor.constraint(equalToConstant: TokenUsageHeatmapView.contentHeight),
 
             githubRow.widthAnchor.constraint(equalTo: aboutStack.widthAnchor),
             githubRow.heightAnchor.constraint(equalToConstant: 48),
+
+            usageTooltipOverlayView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            usageTooltipOverlayView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            usageTooltipOverlayView.topAnchor.constraint(equalTo: contentView.topAnchor),
+            usageTooltipOverlayView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
         ])
+        accountsListHeightConstraint = accountsListView.heightAnchor.constraint(equalToConstant: accountsListView.preferredHeight)
+        accountsListHeightConstraint?.isActive = true
+        accountsScrollHeightConstraint = accountsScrollView.heightAnchor.constraint(equalToConstant: accountsListView.preferredHeight)
+        accountsScrollHeightConstraint?.isActive = true
 
         sidebar.onGeneral = { [weak self] in
             self?.showPage(.general)
+        }
+        sidebar.onAccounts = { [weak self] in
+            self?.showPage(.accounts)
         }
         sidebar.onUsage = { [weak self] in
             self?.showPage(.usage)
@@ -237,14 +345,16 @@ final class AgentBarSettingsViewController: NSViewController {
         }
 
         view = rootView
-        showPage(.general)
+        showPage(selectedPage)
         refreshControls()
+        refreshAccounts()
         refreshUsage()
     }
 
     override func viewWillAppear() {
         super.viewWillAppear()
         refreshControls()
+        refreshAccounts()
     }
 
     private func settingsRow(title: String, control: SettingsSwitch) -> NSView {
@@ -363,6 +473,35 @@ final class AgentBarSettingsViewController: NSViewController {
         return container
     }
 
+    private func accountsHeaderView() -> NSView {
+        let container = NSView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+
+        let titleLabel = NSTextField(labelWithString: "Codex Accounts")
+        titleLabel.font = .systemFont(ofSize: 12.8, weight: .semibold)
+        titleLabel.textColor = .labelColor
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        accountsSummaryLabel.font = .systemFont(ofSize: 11.4, weight: .regular)
+        accountsSummaryLabel.textColor = .secondaryLabelColor
+        accountsSummaryLabel.alignment = .right
+        accountsSummaryLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        container.addSubview(titleLabel)
+        container.addSubview(accountsSummaryLabel)
+
+        NSLayoutConstraint.activate([
+            container.heightAnchor.constraint(equalToConstant: 20),
+            titleLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            titleLabel.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: accountsSummaryLabel.leadingAnchor, constant: -18),
+            accountsSummaryLabel.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            accountsSummaryLabel.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+        ])
+
+        return container
+    }
+
     private func configureSwitch(_ control: SettingsSwitch, action: Selector) {
         control.target = self
         control.action = action
@@ -394,6 +533,18 @@ final class AgentBarSettingsViewController: NSViewController {
             let (snapshot, yearRange) = await task.value
             self?.applyUsage(snapshot, yearRange: yearRange, year: year)
         }
+    }
+
+    func refreshAccounts() {
+        applyAccounts(accountsProvider())
+    }
+
+    private func applyAccounts(_ accounts: [CodexAccountUsageSnapshot]) {
+        accountsListView.accounts = accounts
+        accountsListHeightConstraint?.constant = accountsListView.preferredHeight
+        accountsScrollHeightConstraint?.constant = min(accountsListView.preferredHeight, 280)
+        let count = accounts.count
+        accountsSummaryLabel.stringValue = count == 1 ? "1 account" : "\(count) accounts"
     }
 
     private func applyUsage(_ snapshot: CodexDailyTokenUsageSnapshot, yearRange: ClosedRange<Int>, year: Int) {
@@ -437,34 +588,41 @@ final class AgentBarSettingsViewController: NSViewController {
         refreshControls()
     }
 
-    private func showPage(_ page: SettingsPage) {
+    func showPage(_ page: SettingsPage) {
+        selectedPage = page
         switch page {
         case .general:
             titleLabel.stringValue = "General"
+        case .accounts:
+            titleLabel.stringValue = "Accounts"
+            refreshAccounts()
         case .usage:
             titleLabel.stringValue = "Usage"
         case .about:
             titleLabel.stringValue = "About"
         }
         generalCard.isHidden = page != .general
+        accountsSummaryLabel.superview?.isHidden = page != .accounts
+        accountsCard.isHidden = page != .accounts
+        usageHeaderContainer?.isHidden = page != .usage
         usageCard.isHidden = page != .usage
+        usageTooltipOverlayView.isHidden = page != .usage
         aboutCard.isHidden = page != .about
         sidebar.select(page)
     }
 
     private static func formatTokens(_ tokens: Int) -> String {
-        if tokens >= 1_000_000 {
-            return String(format: "%.1fM", Double(tokens) / 1_000_000)
-        }
-        if tokens >= 1_000 {
-            return String(format: "%.1fK", Double(tokens) / 1_000)
-        }
-        return "\(tokens)"
+        AgentBarDisplayFormatting.tokens(tokens)
     }
 
     @objc private func openGitHub() {
         guard let url = URL(string: "https://github.com/iFurySt/agent-bar") else { return }
         NSWorkspace.shared.open(url)
+    }
+
+    private func switchAccount(_ accountID: String) {
+        onAccountSwitch?(accountID)
+        refreshAccounts()
     }
 
     private func showError(title: String, message: String) {
@@ -480,10 +638,12 @@ final class AgentBarSettingsViewController: NSViewController {
 @MainActor
 final class SettingsSidebarView: NSView {
     var onGeneral: (() -> Void)?
+    var onAccounts: (() -> Void)?
     var onUsage: (() -> Void)?
     var onAbout: (() -> Void)?
 
     private let selectedButton = SidebarItemView(title: "General", symbolName: "gearshape", selected: true)
+    private let accountsButton = SidebarItemView(title: "Accounts", symbolName: "person.2", selected: false)
     private let usageButton = SidebarItemView(title: "Usage", symbolName: "chart.bar.xaxis", selected: false)
     private let aboutButton = SidebarItemView(title: "About", symbolName: "info.circle", selected: false)
 
@@ -494,12 +654,14 @@ final class SettingsSidebarView: NSView {
 
         selectedButton.target = self
         selectedButton.action = #selector(generalPressed)
+        accountsButton.target = self
+        accountsButton.action = #selector(accountsPressed)
         usageButton.target = self
         usageButton.action = #selector(usagePressed)
         aboutButton.target = self
         aboutButton.action = #selector(aboutPressed)
 
-        let stackView = NSStackView(views: [selectedButton, usageButton, aboutButton])
+        let stackView = NSStackView(views: [selectedButton, accountsButton, usageButton, aboutButton])
         stackView.orientation = .vertical
         stackView.alignment = .leading
         stackView.spacing = 4
@@ -511,9 +673,11 @@ final class SettingsSidebarView: NSView {
             stackView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
             stackView.topAnchor.constraint(equalTo: topAnchor, constant: 38),
             selectedButton.widthAnchor.constraint(equalTo: stackView.widthAnchor),
+            accountsButton.widthAnchor.constraint(equalTo: stackView.widthAnchor),
             usageButton.widthAnchor.constraint(equalTo: stackView.widthAnchor),
             aboutButton.widthAnchor.constraint(equalTo: stackView.widthAnchor),
             selectedButton.heightAnchor.constraint(equalToConstant: 28),
+            accountsButton.heightAnchor.constraint(equalToConstant: 28),
             usageButton.heightAnchor.constraint(equalToConstant: 28),
             aboutButton.heightAnchor.constraint(equalToConstant: 28),
         ])
@@ -526,12 +690,17 @@ final class SettingsSidebarView: NSView {
 
     fileprivate func select(_ page: SettingsPage) {
         selectedButton.isSelected = page == .general
+        accountsButton.isSelected = page == .accounts
         usageButton.isSelected = page == .usage
         aboutButton.isSelected = page == .about
     }
 
     @objc private func generalPressed() {
         onGeneral?()
+    }
+
+    @objc private func accountsPressed() {
+        onAccounts?()
     }
 
     @objc private func usagePressed() {
@@ -612,6 +781,204 @@ final class SidebarItemView: NSControl {
     }
 }
 
+final class SettingsAccountsListView: NSView {
+    var accounts: [CodexAccountUsageSnapshot] = [] {
+        didSet {
+            needsDisplay = true
+            invalidateIntrinsicContentSize()
+            resetCursorRects()
+        }
+    }
+    var onAccountSelected: ((String) -> Void)?
+
+    var preferredHeight: CGFloat {
+        guard !accounts.isEmpty else { return 112 }
+        return CGFloat(accounts.count) * Self.rowHeight
+    }
+
+    override var isFlipped: Bool {
+        true
+    }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: NSView.noIntrinsicMetric, height: preferredHeight)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+
+        guard !accounts.isEmpty else {
+            drawEmptyState()
+            return
+        }
+
+        let ordered = orderedAccounts()
+        for (index, account) in ordered.enumerated() {
+            let rect = rowRect(at: index)
+            guard rect.intersects(dirtyRect) else { continue }
+            drawRow(account, in: rect)
+            if index < ordered.count - 1 {
+                AgentBarSettingsPalette.separator.setFill()
+                NSBezierPath(rect: NSRect(x: rect.minX + 20, y: rect.maxY - 1, width: rect.width - 40, height: 1)).fill()
+            }
+        }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        guard let account = account(at: point), !account.isCurrent else {
+            super.mouseDown(with: event)
+            return
+        }
+        onAccountSelected?(account.id)
+    }
+
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        for (index, account) in orderedAccounts().enumerated() where !account.isCurrent {
+            addCursorRect(switchRect(in: rowRect(at: index)), cursor: .pointingHand)
+        }
+    }
+
+    private func account(at point: NSPoint) -> CodexAccountUsageSnapshot? {
+        let ordered = orderedAccounts()
+        guard point.y >= 0 else { return nil }
+        for index in ordered.indices {
+            if switchRect(in: rowRect(at: index)).contains(point) {
+                return ordered[index]
+            }
+        }
+        return nil
+    }
+
+    private func orderedAccounts() -> [CodexAccountUsageSnapshot] {
+        accounts.sorted {
+            if $0.isCurrent != $1.isCurrent { return $0.isCurrent }
+            return ($0.updatedAt ?? .distantPast) > ($1.updatedAt ?? .distantPast)
+        }
+    }
+
+    private func rowRect(at index: Int) -> NSRect {
+        NSRect(x: 0, y: CGFloat(index) * Self.rowHeight, width: bounds.width, height: Self.rowHeight)
+    }
+
+    private func drawEmptyState() {
+        let text = "No saved Codex accounts yet"
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 11.8, weight: .regular),
+            .foregroundColor: NSColor.secondaryLabelColor,
+        ]
+        let size = text.size(withAttributes: attributes)
+        text.draw(at: NSPoint(x: bounds.midX - size.width / 2, y: bounds.midY - size.height / 2), withAttributes: attributes)
+    }
+
+    private func drawRow(_ account: CodexAccountUsageSnapshot, in rect: NSRect) {
+        let switchRect = switchRect(in: rect)
+        let quotaRect = NSRect(x: switchRect.minX - 126, y: rect.midY - 7, width: 112, height: 14)
+        let titleMaxX = quotaRect.minX - 12
+        let title = attributedTitle(account.label)
+        let titleWidth = min(ceil(title.size().width), max(60, titleMaxX - rect.minX - 20))
+        let titleRect = NSRect(x: rect.minX + 20, y: rect.midY - 7, width: titleWidth, height: 14)
+        title.draw(in: titleRect)
+
+        if let plan = account.plan {
+            let chipSize = chipSize(for: plan)
+            let chipX = min(titleRect.maxX + 7, titleMaxX - chipSize.width)
+            if chipX > titleRect.minX {
+                drawChip(plan, in: NSRect(x: chipX, y: rect.midY - chipSize.height / 2, width: chipSize.width, height: chipSize.height))
+            }
+        }
+
+        drawRateLimits(account.rateLimits, in: quotaRect)
+        drawSwitchButton(isCurrent: account.isCurrent, in: switchRect)
+    }
+
+    private func switchRect(in rect: NSRect) -> NSRect {
+        NSRect(x: rect.maxX - 78, y: rect.midY - Self.switchButtonHeight / 2, width: Self.switchButtonWidth, height: Self.switchButtonHeight)
+    }
+
+    private func attributedTitle(_ value: String) -> NSAttributedString {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byTruncatingMiddle
+        return NSAttributedString(
+            string: truncated(value, maxLength: 38),
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 11.8, weight: .semibold),
+                .foregroundColor: NSColor.labelColor,
+                .paragraphStyle: paragraph,
+            ])
+    }
+
+    private func drawRateLimits(_ rateLimits: CodexRateLimitSnapshot, in rect: NSRect) {
+        let fiveHour = rateLimits.fiveHourRemainingPercent.map { "\(min(100, max(0, $0)))%" } ?? "--%"
+        let weekly = rateLimits.weeklyRemainingPercent.map { "\(min(100, max(0, $0)))%" } ?? "--%"
+        let text = NSAttributedString(
+            string: "5h \(fiveHour)  7d \(weekly)",
+            attributes: [
+                .font: NSFont.monospacedSystemFont(ofSize: 10.2, weight: .semibold),
+                .foregroundColor: NSColor.secondaryLabelColor,
+            ])
+        text.draw(in: rect)
+    }
+
+    private func drawSwitchButton(isCurrent: Bool, in rect: NSRect) {
+        let path = NSBezierPath(roundedRect: rect, xRadius: rect.height / 2, yRadius: rect.height / 2)
+        if isCurrent {
+            NSColor.systemGreen.withAlphaComponent(0.14).setFill()
+            NSColor.systemGreen.withAlphaComponent(0.28).setStroke()
+        } else {
+            NSColor.white.withAlphaComponent(0.62).setFill()
+            AgentBarSettingsPalette.cardBorder.setStroke()
+        }
+        path.fill()
+        path.lineWidth = 0.8
+        path.stroke()
+
+        let title = isCurrent ? "Current" : "Switch"
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 10.4, weight: .semibold),
+            .foregroundColor: isCurrent ? NSColor.systemGreen : AgentBarSettingsPalette.selection,
+        ]
+        let attributed = NSAttributedString(string: title, attributes: attributes)
+        let size = attributed.size()
+        attributed.draw(at: NSPoint(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2))
+    }
+
+    private func chipSize(for text: String) -> NSSize {
+        let size = (text as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 8, weight: .bold)])
+        return NSSize(width: ceil(size.width) + 12, height: 15)
+    }
+
+    private func drawChip(_ text: String, in rect: NSRect) {
+        let path = NSBezierPath(roundedRect: rect, xRadius: rect.height / 2, yRadius: rect.height / 2)
+        NSColor.systemBlue.withAlphaComponent(0.12).setFill()
+        path.fill()
+        NSColor.systemBlue.withAlphaComponent(0.24).setStroke()
+        path.lineWidth = 0.8
+        path.stroke()
+
+        let attributed = NSAttributedString(
+            string: text,
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 8, weight: .bold),
+                .foregroundColor: NSColor.systemBlue,
+            ])
+        let textSize = attributed.size()
+        attributed.draw(at: NSPoint(x: rect.midX - textSize.width / 2, y: rect.midY - textSize.height / 2))
+    }
+
+    private func truncated(_ value: String, maxLength: Int) -> String {
+        guard value.count > maxLength else { return value }
+        let head = value.prefix(maxLength - 8)
+        let tail = value.suffix(5)
+        return "\(head)...\(tail)"
+    }
+
+    private static let rowHeight: CGFloat = 44
+    private static let switchButtonWidth: CGFloat = 58
+    private static let switchButtonHeight: CGFloat = 22
+}
+
 final class SettingsLinkRowView: NSControl {
     init(title: String, detail: String) {
         super.init(frame: .zero)
@@ -671,19 +1038,23 @@ final class SettingsLinkRowView: NSControl {
 }
 
 final class TokenUsageHeatmapView: NSView {
+    static let contentHeight: CGFloat = 142
+
     var snapshot = CodexDailyTokenUsageSnapshot(days: []) {
         didSet {
             hoveredItem = nil
+            onHoverChanged?(nil, nil)
             needsDisplay = true
         }
     }
+    var onHoverChanged: ((NSRect?, CodexDailyTokenUsage?) -> Void)?
 
     private let cellSize: CGFloat = 11
     private let cellGap: CGFloat = 4
     private let leftLabelWidth: CGFloat = 36
     private let monthLabelHeight: CGFloat = 24
-    private let tooltipVerticalPadding: CGFloat = 14
-    private let tooltipHorizontalPadding: CGFloat = 14
+    private static let tooltipVerticalPadding: CGFloat = 14
+    private static let tooltipHorizontalPadding: CGFloat = 14
     private var cellRects: [(rect: NSRect, entry: CodexDailyTokenUsage)] = []
     private var hoveredItem: (rect: NSRect, entry: CodexDailyTokenUsage)?
     private var trackingArea: NSTrackingArea?
@@ -706,7 +1077,7 @@ final class TokenUsageHeatmapView: NSView {
     }
 
     override var intrinsicContentSize: NSSize {
-        NSSize(width: leftLabelWidth + 54 * (cellSize + cellGap), height: 190)
+        NSSize(width: leftLabelWidth + 54 * (cellSize + cellGap), height: Self.contentHeight)
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -732,7 +1103,6 @@ final class TokenUsageHeatmapView: NSView {
             let path = NSBezierPath(roundedRect: outline, xRadius: 4, yRadius: 4)
             path.lineWidth = 2
             path.stroke()
-            drawTooltip(for: hoveredItem)
         }
     }
 
@@ -754,11 +1124,13 @@ final class TokenUsageHeatmapView: NSView {
         let next = cellRects.first { $0.rect.contains(point) }
         guard next?.entry.dayKey != hoveredItem?.entry.dayKey else { return }
         hoveredItem = next
+        onHoverChanged?(next?.rect, next?.entry)
         needsDisplay = true
     }
 
     override func mouseExited(with event: NSEvent) {
         hoveredItem = nil
+        onHoverChanged?(nil, nil)
         needsDisplay = true
     }
 
@@ -839,7 +1211,11 @@ final class TokenUsageHeatmapView: NSView {
         }
     }
 
-    private func drawTooltip(for item: (rect: NSRect, entry: CodexDailyTokenUsage)) {
+    fileprivate static func drawTooltip(
+        for item: (rect: NSRect, entry: CodexDailyTokenUsage),
+        in bounds: NSRect,
+        dateFormatter: DateFormatter)
+    {
         let titleAttributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 13.8, weight: .semibold),
             .foregroundColor: NSColor.white,
@@ -904,13 +1280,7 @@ final class TokenUsageHeatmapView: NSView {
     }
 
     private static func formatTokens(_ tokens: Int) -> String {
-        if tokens >= 1_000_000 {
-            return String(format: "%.1fM", Double(tokens) / 1_000_000)
-        }
-        if tokens >= 1_000 {
-            return String(format: "%.1fK", Double(tokens) / 1_000)
-        }
-        return "\(tokens)"
+        AgentBarDisplayFormatting.tokens(tokens)
     }
 
     private func color(for tokens: Int, maxTokens: Int) -> NSColor {
@@ -929,6 +1299,38 @@ final class TokenUsageHeatmapView: NSView {
         default:
             return AgentBarSettingsPalette.heatmapLevel4
         }
+    }
+}
+
+final class UsageTooltipOverlayView: NSView {
+    var hoveredItem: (rect: NSRect, entry: CodexDailyTokenUsage)? {
+        didSet {
+            needsDisplay = true
+        }
+    }
+
+    private lazy var dateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "EEE, MMM d, yyyy"
+        return formatter
+    }()
+
+    override var isOpaque: Bool {
+        false
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard let hoveredItem else { return }
+        TokenUsageHeatmapView.drawTooltip(
+            for: hoveredItem,
+            in: bounds,
+            dateFormatter: dateFormatter)
     }
 }
 
