@@ -1,0 +1,1322 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="Agent Bar showcase: a macOS top island for Codex quota, cost, tokens, accounts, and usage history.">
+  <title>Agent Bar Showcase</title>
+  <style>
+    :root {
+      --bg: #0b0d11;
+      --ink: #f7f7f2;
+      --muted: rgba(247, 247, 242, 0.62);
+      --line: rgba(255, 255, 255, 0.14);
+      --green: #32d74b;
+      --orange: #ff9f0a;
+      --red: #ff453a;
+      --blue: #64d2ff;
+      --accent: #2f83ff;
+      --settings-bg: #f3f1ef;
+      --settings-side: #e6e5e3;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 20% 5%, rgba(47, 131, 255, 0.22), transparent 28%),
+        radial-gradient(circle at 82% 16%, rgba(54, 223, 99, 0.12), transparent 24%),
+        linear-gradient(180deg, #151923 0%, var(--bg) 62%, #08090c 100%);
+      overflow-x: hidden;
+    }
+
+    .page {
+      width: min(1180px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 34px 0 54px;
+    }
+
+    .topline {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      color: var(--muted);
+      font-size: 13px;
+      letter-spacing: 0.01em;
+    }
+
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--ink);
+      font-weight: 700;
+    }
+
+    .mark {
+      width: 24px;
+      height: 24px;
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+      border-radius: 6px;
+    }
+
+    .codex-logo {
+      width: 20px;
+      height: 20px;
+      flex: 0 0 auto;
+      display: block;
+    }
+
+    .app-logo {
+      width: 24px;
+      height: 24px;
+      display: block;
+    }
+
+    .github-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: rgba(247, 247, 242, 0.72);
+      text-decoration: none;
+      font-weight: 650;
+    }
+
+    .github-link:hover {
+      color: var(--ink);
+    }
+
+    .github-icon {
+      width: 17px;
+      height: 17px;
+      display: block;
+      fill: currentColor;
+    }
+
+    .copy {
+      width: min(820px, 100%);
+      margin: 48px auto 30px;
+      text-align: center;
+    }
+
+    .copy h1 {
+      margin: 0;
+      font-size: clamp(48px, 7vw, 88px);
+      line-height: 0.92;
+      letter-spacing: 0;
+    }
+
+    .copy p {
+      max-width: 660px;
+      margin: 20px auto 0;
+      color: var(--muted);
+      font-size: 18px;
+      line-height: 1.55;
+    }
+
+    .actions {
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 24px;
+    }
+
+    .button {
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.08);
+      color: var(--ink);
+      border-radius: 10px;
+      padding: 10px 14px;
+      font: inherit;
+      font-size: 14px;
+      text-decoration: none;
+      cursor: pointer;
+    }
+
+    .button.primary {
+      background: var(--ink);
+      color: #090a0d;
+      border-color: transparent;
+      font-weight: 700;
+    }
+
+    .stage {
+      width: 100%;
+    }
+
+    .mac {
+      position: relative;
+      width: min(1020px, 100%);
+      aspect-ratio: 16 / 10;
+      margin: 0 auto;
+      overflow: hidden;
+      border: 12px solid #17191f;
+      border-radius: 26px;
+      background:
+        radial-gradient(circle at 20% 24%, rgba(255, 226, 166, 0.92), transparent 23%),
+        radial-gradient(circle at 76% 16%, rgba(86, 139, 210, 0.62), transparent 28%),
+        linear-gradient(135deg, #d5b779 0%, #a1844f 36%, #515053 58%, #263855 100%);
+      box-shadow:
+        0 34px 100px rgba(0, 0, 0, 0.46),
+        inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+    }
+
+    .screen-glow {
+      position: absolute;
+      inset: 0;
+      background:
+        linear-gradient(90deg, rgba(255, 255, 255, 0.08), transparent 26%),
+        linear-gradient(180deg, transparent 60%, rgba(0, 0, 0, 0.18));
+      pointer-events: none;
+    }
+
+    .menubar {
+      position: absolute;
+      inset: 0 0 auto;
+      height: 30px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 16px;
+      color: rgba(255, 255, 255, 0.88);
+      font-size: 12px;
+      background: rgba(30, 24, 18, 0.38);
+      backdrop-filter: blur(16px);
+    }
+
+    .menubar span {
+      margin-right: 14px;
+    }
+
+    .island {
+      position: absolute;
+      top: 0;
+      left: 50%;
+      z-index: 20;
+      width: var(--island-w, 172px);
+      height: var(--island-h, 30px);
+      transform: translateX(-50%);
+      overflow: hidden;
+      color: #f7f7f2;
+      background: #020202;
+      border-radius: 0 0 var(--island-r, 16px) var(--island-r, 16px);
+      box-shadow:
+        0 3px 10px rgba(0, 0, 0, 0.58),
+        0 14px 30px rgba(0, 0, 0, 0.32);
+      transition:
+        width 0.58s cubic-bezier(0.2, 0.85, 0.2, 1),
+        height 0.58s cubic-bezier(0.2, 0.85, 0.2, 1),
+        border-radius 0.58s cubic-bezier(0.2, 0.85, 0.2, 1),
+        box-shadow 0.58s ease;
+    }
+
+    .island-layer {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      opacity: 0;
+      transform: translateY(8px) scale(0.98);
+      pointer-events: none;
+      transition: opacity 0.28s ease, transform 0.28s ease;
+    }
+
+    .island-layer.active {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+      pointer-events: auto;
+    }
+
+    .layer-bar {
+      display: flex;
+      align-items: center;
+      gap: 0;
+      height: 30px;
+      padding: 0 14px;
+      white-space: nowrap;
+      font-family: "SF Mono", ui-monospace, Menlo, Monaco, Consolas, monospace;
+      font-size: 11px;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .island .codex-logo {
+      width: 16px;
+      height: 16px;
+    }
+
+    .bar-logo {
+      margin-right: 6px;
+    }
+
+    .notch-bar {
+      display: grid;
+      grid-template-columns: 70px 116px 46px;
+      align-items: center;
+      height: 30px;
+      padding: 0;
+      font-family: "SF Mono", ui-monospace, Menlo, Monaco, Consolas, monospace;
+      font-size: 11px;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .notch-left,
+    .notch-right {
+      display: flex;
+      align-items: center;
+      height: 30px;
+    }
+
+    .notch-left {
+      justify-content: flex-end;
+      gap: 8px;
+      padding-left: 16px;
+      padding-right: 2px;
+    }
+
+    .notch-gap {
+      height: 30px;
+    }
+
+    .notch-right {
+      justify-content: flex-start;
+      padding-left: 2px;
+      padding-right: 16px;
+    }
+
+    .bar-label {
+      margin-right: 5px;
+    }
+
+    .bar-value {
+      margin-right: 10px;
+      color: rgba(255, 255, 255, 0.9);
+    }
+
+    .bar-money {
+      color: rgba(255, 255, 255, 0.95);
+    }
+
+    .bar-sep {
+      margin: 0 5px;
+      color: rgba(255, 255, 255, 0.42);
+    }
+
+    .bar-slash {
+      margin: 0;
+      color: rgba(255, 255, 255, 0.42);
+    }
+
+    .bar-token-label {
+      margin-left: 5px;
+    }
+
+    .accounts-usage-bar {
+      position: absolute;
+      top: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      width: max-content;
+      max-width: 100%;
+      overflow: hidden;
+      border-radius: 0 0 12px 12px;
+    }
+
+    .muted {
+      color: rgba(255, 255, 255, 0.58);
+    }
+
+    .green {
+      color: var(--green);
+    }
+
+    .orange {
+      color: var(--orange);
+    }
+
+    .blue {
+      color: var(--blue);
+    }
+
+    .sep {
+      color: rgba(255, 255, 255, 0.32);
+    }
+
+    .gear {
+      margin-left: auto;
+      color: rgba(255, 255, 255, 0.78);
+      font-size: 11px;
+    }
+
+    .layer-accounts {
+      flex-direction: column;
+      gap: 9px;
+      padding: 39px 12px 12px;
+    }
+
+    .accounts-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .account-card {
+      min-height: 72px;
+      padding: 9px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 16px;
+      background: linear-gradient(180deg, #1f1f22, #151517);
+    }
+
+    .account-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 7px;
+    }
+
+    .email {
+      height: 11px;
+      width: 138px;
+      max-width: 70%;
+      border-radius: 4px;
+      background: linear-gradient(90deg, rgba(255,255,255,0.14), rgba(255,255,255,0.45), rgba(255,255,255,0.13));
+      filter: blur(3px);
+    }
+
+    .chip {
+      border-radius: 999px;
+      padding: 2px 8px;
+      color: #c5e0ff;
+      border: 1px solid rgba(47, 131, 255, 0.58);
+      background: rgba(47, 131, 255, 0.24);
+      font-size: 10px;
+      font-weight: 900;
+    }
+
+    .quota {
+      display: grid;
+      grid-template-columns: 42px 1fr 58px;
+      align-items: center;
+      gap: 6px;
+      margin: 3px 0;
+      color: rgba(255, 255, 255, 0.74);
+      font-size: 10.8px;
+      font-weight: 800;
+    }
+
+    .quota > span:first-child {
+      white-space: nowrap;
+    }
+
+    .track {
+      height: 6px;
+      border-radius: 99px;
+      background: rgba(255, 255, 255, 0.13);
+      overflow: hidden;
+    }
+
+    .fill {
+      width: var(--value);
+      height: 100%;
+      border-radius: inherit;
+      background: var(--fill, var(--green));
+      animation: grow 1.2s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+    }
+
+    .reset {
+      color: rgba(255, 255, 255, 0.42);
+      font-size: 9.6px;
+      white-space: nowrap;
+    }
+
+    .layer-usage {
+      align-items: center;
+      gap: 7px;
+      height: 30px;
+      padding: 0 11px;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .desktop {
+      position: absolute;
+      inset: 30px 0 0;
+    }
+
+    .terminal {
+      position: absolute;
+      width: 420px;
+      height: 238px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 13px;
+      overflow: hidden;
+      color: #d8e4e1;
+      background: rgba(17, 18, 20, 0.9);
+      box-shadow: 0 24px 52px rgba(0, 0, 0, 0.28);
+      transition: opacity 0.45s ease, transform 0.45s ease;
+    }
+
+    .terminal.one {
+      left: 120px;
+      top: 120px;
+      opacity: 0.72;
+      transform: scale(0.95);
+    }
+
+    .terminal.two {
+      right: 118px;
+      top: 94px;
+      opacity: 0.72;
+      transform: scale(0.95);
+    }
+
+    .terminal.front {
+      left: 50%;
+      top: 230px;
+      z-index: 5;
+      transform: translateX(-50%);
+    }
+
+    .terminal-bar {
+      height: 28px;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 0 12px;
+      color: rgba(255, 255, 255, 0.58);
+      font-size: 12px;
+      background: rgba(255, 255, 255, 0.08);
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #ff5f57;
+    }
+
+    .dot:nth-child(2) {
+      background: #ffbd2e;
+    }
+
+    .dot:nth-child(3) {
+      background: #28c840;
+    }
+
+    .terminal-title {
+      margin-left: 4px;
+    }
+
+    .terminal-body {
+      padding: 16px 18px;
+      font-family: "SF Mono", ui-monospace, Menlo, Monaco, Consolas, monospace;
+      font-size: 13px;
+      line-height: 1.62;
+    }
+
+    .cmd {
+      color: #9fe7b1;
+    }
+
+    .ok {
+      color: #5ab8ff;
+    }
+
+    .settings-window {
+      position: absolute;
+      left: 50%;
+      top: 92px;
+      z-index: 8;
+      width: 720px;
+      height: 390px;
+      overflow: hidden;
+      border-radius: 18px;
+      color: #25262a;
+      background: rgba(243, 241, 239, 0.96);
+      box-shadow: 0 26px 70px rgba(0, 0, 0, 0.28);
+      transform: translateX(-50%) translateY(18px) scale(0.94);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.45s ease, transform 0.45s ease;
+    }
+
+    .settings-titlebar {
+      position: absolute;
+      top: 0;
+      left: 0;
+      z-index: 2;
+      height: 30px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 12px;
+      pointer-events: none;
+    }
+
+    .settings-body {
+      display: grid;
+      grid-template-columns: 150px 1fr;
+      height: 100%;
+    }
+
+    .sidebar {
+      background: var(--settings-side);
+      padding: 38px 10px 18px;
+      border-right: 1px solid rgba(0, 0, 0, 0.08);
+    }
+
+    .side-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      height: 28px;
+      padding: 0 10px;
+      border-radius: 6px;
+      font-size: 11.8px;
+      font-weight: 400;
+      color: #33363c;
+    }
+
+    .side-item.active {
+      color: white;
+      background: var(--accent);
+      font-weight: 650;
+    }
+
+    .side-icon {
+      width: 16px;
+      height: 16px;
+      display: inline-grid;
+      place-items: center;
+      flex: 0 0 16px;
+      color: var(--accent);
+      line-height: 1;
+    }
+
+    .side-icon svg {
+      width: 13px;
+      height: 13px;
+      display: block;
+      stroke: currentColor;
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      fill: none;
+    }
+
+    .side-item.active .side-icon {
+      color: white;
+    }
+
+    .content {
+      background: var(--settings-bg);
+      padding: 24px 24px;
+    }
+
+    .usage-heading {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      align-items: center;
+      gap: 18px;
+      height: 20px;
+      margin: 0 8px 10px;
+    }
+
+    .usage-heading h2 {
+      margin: 0;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+
+    .year-control {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      color: #25262a;
+      font-size: 12px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .year-control button {
+      width: 22px;
+      height: 22px;
+      border: 0;
+      padding: 0;
+      border-radius: 6px;
+      color: #5d6268;
+      background: transparent;
+      font: inherit;
+    }
+
+    .usage-summary {
+      justify-self: end;
+      color: #767980;
+      font-size: 11px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .heatmap {
+      height: 174px;
+      overflow-x: auto;
+      overflow-y: hidden;
+      border: 0.5px solid #e2e0df;
+      border-radius: 7px;
+      padding: 16px;
+      background: #efedeb;
+    }
+
+    .heatmap-grid {
+      display: grid;
+      grid-template-columns: 36px 810px;
+      grid-template-rows: 24px 101px;
+      width: 846px;
+      height: 142px;
+    }
+
+    .months {
+      position: relative;
+      grid-column: 2;
+      color: #5d6268;
+      font-size: 12px;
+      line-height: 1;
+    }
+
+    .months span {
+      position: absolute;
+      left: calc(var(--week) * 15px);
+    }
+
+    .weekdays {
+      grid-column: 1;
+      grid-row: 2;
+      position: relative;
+      color: #5d6268;
+      font-size: 12px;
+      line-height: 1;
+    }
+
+    .weekdays span {
+      position: absolute;
+      left: 0;
+      top: calc(var(--row) * 15px);
+    }
+
+    .cells {
+      grid-column: 2;
+      grid-row: 2;
+      display: grid;
+      grid-template-columns: repeat(54, 11px);
+      grid-template-rows: repeat(7, 11px);
+      grid-auto-flow: column;
+      gap: 4px;
+    }
+
+    .cell {
+      display: block;
+      width: 11px;
+      height: 11px;
+      border-radius: 3px;
+      background: #e7e7e7;
+      animation: pulseCell 3.8s ease-in-out infinite;
+      animation-delay: calc(var(--i) * 24ms);
+    }
+
+    .cell.level-1 {
+      background: #a9d6c9;
+    }
+
+    .cell.level-2 {
+      background: #78bda9;
+    }
+
+    .cell.level-3 {
+      background: #4b9c82;
+    }
+
+    .cell.level-4 {
+      background: #177953;
+    }
+
+    body.scene-usage-tooltip .cell.hovered {
+      outline: 2px solid #7d858d;
+      outline-offset: 2px;
+    }
+
+    .tooltip {
+      position: absolute;
+      right: 130px;
+      top: 42px;
+      width: 208px;
+      padding: 18px;
+      border-radius: 7px;
+      color: white;
+      background: #2f2f30;
+      box-shadow: 0 18px 45px rgba(0, 0, 0, 0.28);
+      opacity: 0;
+      transform: translateY(12px);
+      transition: opacity 0.38s ease, transform 0.38s ease;
+    }
+
+    .tooltip strong,
+    .tooltip span {
+      display: block;
+    }
+
+    .tooltip .money {
+      margin-top: 10px;
+      color: #6ff1a1;
+      font-weight: 800;
+    }
+
+    .tooltip .tokens {
+      margin-top: 7px;
+      color: #78b8ff;
+      font-weight: 800;
+    }
+
+    .cursor {
+      position: absolute;
+      z-index: 30;
+      left: 50%;
+      top: 46%;
+      width: 18px;
+      height: 24px;
+      opacity: 0;
+      transform: translate(-2px, -2px);
+      transition:
+        left 0.8s cubic-bezier(0.2, 0.8, 0.2, 1),
+        top 0.8s cubic-bezier(0.2, 0.8, 0.2, 1),
+        opacity 0.25s ease;
+      filter: drop-shadow(0 2px 1px rgba(0, 0, 0, 0.7));
+    }
+
+    .cursor.visible {
+      opacity: 1;
+    }
+
+    .cursor.clicking {
+      animation: cursorClick 0.32s ease;
+    }
+
+    .scene-tabs {
+      display: flex;
+      justify-content: center;
+      gap: 8px;
+      margin: 24px auto 0;
+    }
+
+    .scene-tab {
+      position: relative;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      color: rgba(255, 255, 255, 0.68);
+      background: rgba(255, 255, 255, 0.07);
+      border-radius: 999px;
+      padding: 8px 12px;
+      font: inherit;
+      font-size: 13px;
+      cursor: pointer;
+    }
+
+    .scene-tab.active {
+      color: #090a0d;
+      background: var(--ink);
+    }
+
+    .caption {
+      text-align: center;
+      color: var(--muted);
+      font-size: 14px;
+      margin-top: 14px;
+    }
+
+    body.scene-notch {
+      --island-w: 232px;
+      --island-h: 30px;
+      --island-r: 12px;
+    }
+
+    body.scene-no-notch {
+      --island-w: 568px;
+      --island-h: 30px;
+      --island-r: 12px;
+    }
+
+    body.scene-accounts {
+      --island-w: 568px;
+      --island-h: 214px;
+      --island-r: 18px;
+    }
+
+    body.scene-usage,
+    body.scene-usage-tooltip {
+      --island-w: 232px;
+      --island-h: 30px;
+      --island-r: 12px;
+    }
+
+    body.scene-notch .desktop-for-terminals,
+    body.scene-no-notch .desktop-for-terminals,
+    body.scene-accounts .desktop-for-terminals,
+    body.scene-usage .desktop-for-terminals,
+    body.scene-usage-tooltip .desktop-for-terminals {
+      opacity: 0;
+      transform: scale(0.9) translateY(20px);
+      pointer-events: none;
+    }
+
+    body.scene-usage .settings-window,
+    body.scene-usage-tooltip .settings-window {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0) scale(1);
+      pointer-events: auto;
+    }
+
+    body.scene-usage-tooltip .tooltip {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    @keyframes grow {
+      from {
+        transform: scaleX(0.12);
+        transform-origin: left;
+      }
+    }
+
+    @keyframes pulseCell {
+      50% {
+        filter: brightness(1.08);
+      }
+    }
+
+    @keyframes cursorClick {
+      50% {
+        transform: translate(-2px, -2px) scale(0.86);
+      }
+    }
+
+    @media (max-width: 840px) {
+      .copy {
+        margin-top: 48px;
+      }
+
+      .mac {
+        width: 100%;
+      }
+
+      .island {
+        transform: translateX(-50%) scale(0.74);
+        transform-origin: top center;
+      }
+
+      .settings-window {
+        width: 82%;
+      }
+
+      .terminal {
+        width: 48%;
+      }
+
+      .terminal.front {
+        width: 52%;
+      }
+    }
+
+    @media (max-width: 620px) {
+      .page {
+        width: min(100vw - 20px, 560px);
+      }
+
+      .copy h1 {
+        font-size: 46px;
+      }
+
+      .copy p {
+        font-size: 16px;
+      }
+
+      .scene-tabs {
+        flex-wrap: wrap;
+      }
+    }
+  </style>
+</head>
+<body class="scene-notch">
+  <main class="page">
+    <header class="topline">
+      <div class="brand">
+        <span class="mark" aria-hidden="true">
+          <img class="app-logo" src="assets/agentbar.png" alt="">
+        </span>
+        Agent Bar
+      </div>
+      <a class="github-link" href="https://github.com/iFurySt/agent-bar" aria-label="Open Agent Bar on GitHub">
+        <svg class="github-icon" viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M8 0C3.58 0 0 3.66 0 8.18c0 3.61 2.29 6.67 5.47 7.75.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.5-2.01.38-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.16-.28-.16-.68-.55-.01-.56.63-.01 1.08.59 1.23.84.72 1.24 1.87.89 2.33.68.07-.53.28-.89.51-1.09-1.78-.21-3.64-.91-3.64-4.04 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .67-.22 2.2.84A7.45 7.45 0 0 1 8 3.97c.68 0 1.36.09 2 .27 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.95.08 2.16.51.57.82 1.3.82 2.19 0 3.14-1.87 3.83-3.65 4.04.29.26.54.75.54 1.52 0 1.1-.01 1.98-.01 2.25 0 .22.15.47.55.39A8.08 8.08 0 0 0 16 8.18C16 3.66 12.42 0 8 0Z"/>
+        </svg>
+        iFurySt/agent-bar
+      </a>
+    </header>
+
+    <section class="copy">
+      <h1>Codex usage, always in sight.</h1>
+      <p>Agent Bar turns quota, tokens, cost, account switching, and yearly usage into a quiet native island at the top of macOS.</p>
+      <div class="actions">
+        <a class="button primary" href="https://github.com/iFurySt/agent-bar#readme">README</a>
+        <button class="button" type="button" id="toggleAuto">Pause motion</button>
+      </div>
+    </section>
+
+    <section class="stage" aria-label="Animated Agent Bar product showcase">
+      <div class="mac">
+        <div class="menubar">
+          <div><span></span><span>Agent Bar</span><span>File</span><span>Window</span><span>Help</span></div>
+          <div><span id="clock">Mon 2:26 PM</span></div>
+        </div>
+
+        <div class="island" id="island">
+          <div class="island-layer notch-bar active" data-layer="notch" aria-label="Notch usage bar">
+            <div class="notch-left">
+              <img class="codex-logo" src="assets/codex.svg" alt="Codex">
+              <span class="green">93%</span>
+            </div>
+            <div class="notch-gap" aria-hidden="true"></div>
+            <div class="notch-right">
+              <span class="orange">55%</span>
+            </div>
+          </div>
+
+          <div class="island-layer layer-bar" data-layer="no-notch">
+            <img class="codex-logo bar-logo" src="assets/codex.svg" alt="Codex">
+            <span class="muted bar-label">5h</span><span class="green bar-value">93%</span>
+            <span class="muted bar-label">7d</span><span class="orange bar-value">55%</span>
+            <span class="muted bar-label">Today:</span><span class="bar-money">$53.56</span>
+            <span class="bar-sep">·</span><span class="blue">70M</span><span class="bar-slash">/</span><span class="muted bar-label">~30 Days:</span><span class="bar-money">$3,838.29</span>
+            <span class="bar-sep">·</span><span class="blue">9.2B</span><span class="muted bar-token-label">Tokens</span>
+          </div>
+
+          <div class="island-layer layer-accounts" data-layer="accounts">
+            <div class="layer-bar accounts-usage-bar" style="height: 30px;">
+              <img class="codex-logo bar-logo" src="assets/codex.svg" alt="Codex">
+              <span class="muted bar-label">5h</span><span class="green bar-value">93%</span>
+              <span class="muted bar-label">7d</span><span class="orange bar-value">55%</span>
+              <span class="muted bar-label">Today:</span><span class="bar-money">$53.56</span>
+              <span class="bar-sep">·</span><span class="blue">70M</span><span class="bar-slash">/</span><span class="muted bar-label">~30 Days:</span><span class="bar-money">$3,838.29</span>
+              <span class="bar-sep">·</span><span class="blue">9.2B</span><span class="muted bar-token-label">Tokens</span>
+            </div>
+            <div class="accounts-grid">
+              <article class="account-card">
+                <div class="account-top"><div class="email"></div><span class="chip">PLUS</span></div>
+                <div class="quota"><span>5h 93%</span><div class="track"><div class="fill" style="--value: 93%;"></div></div><span class="reset">resets 4h</span></div>
+                <div class="quota"><span>7d 55%</span><div class="track"><div class="fill" style="--value: 55%; --fill: var(--orange);"></div></div><span class="reset">resets 4d</span></div>
+              </article>
+              <article class="account-card">
+                <div class="account-top"><div class="email"></div><span class="chip">PLUS</span></div>
+                <div class="quota"><span>5h 15%</span><div class="track"><div class="fill" style="--value: 15%; --fill: var(--red);"></div></div><span class="reset">resets 4h</span></div>
+                <div class="quota"><span>7d 55%</span><div class="track"><div class="fill" style="--value: 55%; --fill: var(--orange);"></div></div><span class="reset">resets 4d</span></div>
+              </article>
+              <article class="account-card">
+                <div class="account-top"><div class="email"></div><span class="chip">PRO</span></div>
+                <div class="quota"><span>5h 3%</span><div class="track"><div class="fill" style="--value: 3%; --fill: var(--red);"></div></div><span class="reset">resets 3h</span></div>
+                <div class="quota"><span>7d 53%</span><div class="track"><div class="fill" style="--value: 53%; --fill: var(--orange);"></div></div><span class="reset">resets 2d</span></div>
+              </article>
+              <article class="account-card">
+                <div class="account-top"><div class="email"></div><span class="chip">PLUS</span></div>
+                <div class="quota"><span>5h 0%</span><div class="track"><div class="fill" style="--value: 0%; --fill: var(--red);"></div></div><span class="reset">resets 2h</span></div>
+                <div class="quota"><span>7d 46%</span><div class="track"><div class="fill" style="--value: 46%; --fill: var(--orange);"></div></div><span class="reset">resets 2d</span></div>
+              </article>
+            </div>
+          </div>
+
+          <div class="island-layer notch-bar" data-layer="usage" aria-label="Notch usage bar">
+            <div class="notch-left">
+              <img class="codex-logo" src="assets/codex.svg" alt="Codex">
+              <span class="green">93%</span>
+            </div>
+            <div class="notch-gap" aria-hidden="true"></div>
+            <div class="notch-right">
+              <span class="orange">55%</span>
+            </div>
+          </div>
+
+          <div class="island-layer notch-bar" data-layer="usage-tooltip" aria-label="Notch usage bar">
+            <div class="notch-left">
+              <img class="codex-logo" src="assets/codex.svg" alt="Codex">
+              <span class="green">93%</span>
+            </div>
+            <div class="notch-gap" aria-hidden="true"></div>
+            <div class="notch-right">
+              <span class="orange">55%</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="desktop">
+          <div class="desktop-for-terminals">
+            <section class="terminal one">
+              <div class="terminal-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="terminal-title">codex — quota-scan</span></div>
+              <div class="terminal-body">
+                <div class="cmd">Reading ~/.codex/sessions</div>
+                <div>Found latest token_count event</div>
+                <div class="ok">5h 93% · 7d 55%</div>
+              </div>
+            </section>
+            <section class="terminal two">
+              <div class="terminal-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="terminal-title">agent-bar — cache</span></div>
+              <div class="terminal-body">
+                <div class="cmd">Reusing cache.json</div>
+                <div>Today: $53.56 · 70M</div>
+                <div class="ok">~30 Days: 9.2B tokens</div>
+              </div>
+            </section>
+            <section class="terminal front" id="frontTerminal">
+              <div class="terminal-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="terminal-title" id="terminalTitle">swift run AgentBar</span></div>
+              <div class="terminal-body" id="terminalBody">
+                <div class="cmd">Starting Agent Bar</div>
+                <div>Creating top island overlay</div>
+                <div>Refreshing Codex usage silently</div>
+                <div class="ok">Ready</div>
+              </div>
+            </section>
+          </div>
+
+          <section class="settings-window">
+            <div class="settings-titlebar">
+              <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+            </div>
+            <div class="settings-body">
+              <aside class="sidebar">
+                <div class="side-item"><span class="side-icon"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="2.1"/><path d="M6.9 1.8h2.2l.3 1.4c.4.1.8.3 1.1.5l1.2-.8 1.5 1.5-.8 1.2c.2.4.4.7.5 1.1l1.4.3v2.2l-1.4.3c-.1.4-.3.8-.5 1.1l.8 1.2-1.5 1.5-1.2-.8c-.4.2-.7.4-1.1.5l-.3 1.4H6.9l-.3-1.4c-.4-.1-.8-.3-1.1-.5l-1.2.8-1.5-1.5.8-1.2c-.2-.4-.4-.7-.5-1.1l-1.4-.3V6.9l1.4-.3c.1-.4.3-.8.5-1.1l-.8-1.2 1.5-1.5 1.2.8c.4-.2.7-.4 1.1-.5l.3-1.3Z"/></svg></span><span>General</span></div>
+                <div class="side-item"><span class="side-icon"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="6" cy="5.4" r="2.1"/><path d="M2.4 12.7c.5-2.2 1.8-3.3 3.6-3.3s3.1 1.1 3.6 3.3"/><circle cx="11.3" cy="6.1" r="1.6"/><path d="M10.2 9.6c1.6.1 2.7 1.1 3.1 3.1"/></svg></span><span>Accounts</span></div>
+                <div class="side-item active"><span class="side-icon"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 12.8h11"/><path d="M4.2 10.8V6.7M8 10.8V3.2M11.8 10.8V5.1"/></svg></span><span>Usage</span></div>
+                <div class="side-item"><span class="side-icon"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.8"/><path d="M8 7.2v4M8 4.7h.01"/></svg></span><span>About</span></div>
+              </aside>
+              <div class="content">
+                <div class="usage-heading">
+                  <h2>Daily Tokens</h2>
+                  <div class="year-control" aria-label="Year">
+                    <button type="button" aria-label="Previous year">‹</button>
+                    <span>2026</span>
+                    <button type="button" aria-label="Next year">›</button>
+                  </div>
+                  <div class="usage-summary">9.2B tokens in 2026</div>
+                </div>
+                <div class="heatmap">
+                  <div class="heatmap-grid">
+                    <div class="months" aria-hidden="true">
+                      <span style="--week: 0;">Jan</span>
+                      <span style="--week: 5;">Feb</span>
+                      <span style="--week: 9;">Mar</span>
+                      <span style="--week: 14;">Apr</span>
+                      <span style="--week: 18;">May</span>
+                      <span style="--week: 23;">Jun</span>
+                      <span style="--week: 27;">Jul</span>
+                      <span style="--week: 31;">Aug</span>
+                      <span style="--week: 36;">Sep</span>
+                      <span style="--week: 40;">Oct</span>
+                      <span style="--week: 45;">Nov</span>
+                      <span style="--week: 49;">Dec</span>
+                    </div>
+                    <div class="weekdays" aria-hidden="true">
+                      <span style="--row: 1;">Mon</span>
+                      <span style="--row: 3;">Wed</span>
+                      <span style="--row: 5;">Fri</span>
+                    </div>
+                    <div class="cells" id="cells"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="tooltip">
+              <strong>Thu, Apr 16, 2026</strong>
+              <span class="money">$1725.74 spent</span>
+              <span class="tokens">4.6B Tokens</span>
+            </div>
+          </section>
+        </div>
+
+        <div class="cursor" id="cursor" aria-hidden="true">
+          <svg viewBox="0 0 18 24" fill="none">
+            <path d="M1 1L1 18L6 13L10.5 23L14 21.5L9.5 12H17L1 1Z" fill="white" stroke="black" stroke-width="1.1"/>
+          </svg>
+        </div>
+
+        <div class="screen-glow"></div>
+      </div>
+
+      <div class="scene-tabs" aria-label="Showcase scenes">
+        <button class="scene-tab active" type="button" data-scene="notch">Notch Usage Bar</button>
+        <button class="scene-tab" type="button" data-scene="no-notch">No-notch Usage Bar</button>
+        <button class="scene-tab" type="button" data-scene="accounts">Accounts</button>
+        <button class="scene-tab" type="button" data-scene="usage">Usage</button>
+        <button class="scene-tab" type="button" data-scene="usage-tooltip">Usage Tooltip</button>
+      </div>
+      <p class="caption" id="caption">Notch usage bar keeps quota visible without placing text inside the physical notch.</p>
+    </section>
+  </main>
+
+  <script>
+    const body = document.body;
+    const tabs = [...document.querySelectorAll(".scene-tab")];
+    const layers = [...document.querySelectorAll(".island-layer")];
+    const caption = document.getElementById("caption");
+    const toggleAuto = document.getElementById("toggleAuto");
+    const cursor = document.getElementById("cursor");
+    const terminalTitle = document.getElementById("terminalTitle");
+    const terminalBody = document.getElementById("terminalBody");
+    const params = new URLSearchParams(window.location.search);
+    const captions = {
+      notch: "Notch usage bar keeps quota visible without placing text inside the physical notch.",
+      "no-notch": "No-notch usage bar uses the same menu-bar height, but has room for full usage detail.",
+      accounts: "Hover expansion reveals saved Codex accounts without becoming a full-screen overlay.",
+      usage: "The gear opens Usage with the same yearly token heatmap as the app.",
+      "usage-tooltip": "Usage Tooltip reuses the Usage page and overlays the hovered-day detail."
+    };
+    const terminalText = {
+      notch: ["Starting Agent Bar", "Detecting physical notch", "Rendering notch quota island", "Ready"],
+      "no-notch": ["Scanning cost deltas", "Today: $53.56 · 70M tokens", "~30 Days: $3,838.29", "9.2B tokens cached"],
+      accounts: ["Loading saved accounts", "Current account: Plus", "3 accounts need attention", "Switch writes back to auth.json"],
+      usage: ["Opening Usage", "Loading 2026 token history", "Rendering month and weekday labels", "Usage page ready"],
+      "usage-tooltip": ["Reading yearly token history", "Hover Apr 16", "$1725.74 spent", "4.6B tokens"]
+    };
+    const scenes = ["notch", "no-notch", "accounts", "usage", "usage-tooltip"];
+    const initialScene = scenes.includes(params.get("scene")) ? params.get("scene") : "notch";
+    let index = scenes.indexOf(initialScene);
+    let auto = params.get("auto") !== "0";
+    let timer;
+    let cursorTimer;
+
+    function setLayer(scene) {
+      layers.forEach((layer) => {
+        layer.classList.toggle("active", layer.dataset.layer === scene);
+      });
+    }
+
+    function fitNoNotchWidth(scene) {
+      if (scene !== "no-notch") {
+        body.style.removeProperty("--island-w");
+        return;
+      }
+
+      const layer = layers.find((item) => item.dataset.layer === "no-notch");
+      if (!layer) return;
+
+      const contentWidth = [...layer.children].reduce((width, child) => {
+        const rect = child.getBoundingClientRect();
+        const style = window.getComputedStyle(child);
+        return width + rect.width + parseFloat(style.marginLeft) + parseFloat(style.marginRight);
+      }, 0);
+      const padding = 28;
+      body.style.setProperty("--island-w", `${Math.ceil(contentWidth + padding)}px`);
+    }
+
+    function setTerminal(scene) {
+      terminalTitle.textContent = scene === "usage" || scene === "usage-tooltip" ? "agent-bar — usage" : "swift run AgentBar";
+      terminalBody.innerHTML = terminalText[scene].map((line, i) => {
+        const cls = i === 0 ? "cmd" : i === terminalText[scene].length - 1 ? "ok" : "";
+        return `<div class="${cls}">${line}</div>`;
+      }).join("");
+    }
+
+    function moveCursor(scene) {
+      clearTimeout(cursorTimer);
+      cursor.classList.add("visible");
+      const points = {
+        notch: ["50%", "45%"],
+        "no-notch": ["74%", "9%"],
+        accounts: ["50%", "11%"],
+        usage: ["72%", "9%"],
+        "usage-tooltip": ["62.8%", "46%"]
+      };
+      const [left, top] = points[scene];
+      cursor.style.left = left;
+      cursor.style.top = top;
+      cursor.classList.remove("clicking");
+      cursorTimer = setTimeout(() => {
+        cursor.classList.add("clicking");
+      }, 620);
+      cursorTimer = setTimeout(() => {
+        if (scene === "notch") cursor.classList.remove("visible");
+      }, 1200);
+    }
+
+    function setScene(scene) {
+      body.className = `scene-${scene}`;
+      setLayer(scene);
+      requestAnimationFrame(() => fitNoNotchWidth(scene));
+      setTerminal(scene);
+      moveCursor(scene);
+      tabs.forEach((tab) => tab.classList.toggle("active", tab.dataset.scene === scene));
+      caption.textContent = captions[scene];
+      index = scenes.indexOf(scene);
+    }
+
+    function startAuto() {
+      clearInterval(timer);
+      if (!auto) return;
+      timer = setInterval(() => {
+        index = (index + 1) % scenes.length;
+        setScene(scenes[index]);
+      }, 3000);
+    }
+
+    tabs.forEach((tab) => {
+      tab.addEventListener("click", () => {
+        setScene(tab.dataset.scene);
+        startAuto();
+      });
+    });
+
+    toggleAuto.addEventListener("click", () => {
+      auto = !auto;
+      toggleAuto.textContent = auto ? "Pause motion" : "Resume motion";
+      startAuto();
+    });
+
+    const cells = document.getElementById("cells");
+    for (let i = 0; i < 365; i += 1) {
+      const cell = document.createElement("span");
+      cell.className = "cell";
+      cell.style.setProperty("--i", i);
+      const wave = (Math.sin(i / 9) + 1) / 2;
+      if (i > 10 && i % 5 !== 0) cell.classList.add("level-1");
+      if (i > 70 && i < 230 && wave > 0.38) cell.classList.add("level-2");
+      if (i > 118 && i < 164 && wave > 0.56) cell.classList.add("level-3");
+      if (i === 105 || i === 106 || i === 107 || i === 108) cell.classList.add("level-4");
+      if (i === 123) cell.classList.add("hovered");
+      cells.appendChild(cell);
+    }
+
+    const clock = document.getElementById("clock");
+    setInterval(() => {
+      const now = new Date();
+      clock.textContent = now.toLocaleString("en-US", {
+        weekday: "short",
+        hour: "numeric",
+        minute: "2-digit"
+      });
+    }, 1000);
+
+    setScene(initialScene);
+    toggleAuto.textContent = auto ? "Pause motion" : "Resume motion";
+    startAuto();
+  </script>
+</body>
+</html>

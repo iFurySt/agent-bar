@@ -6,6 +6,10 @@
 [CODEX] 5h 47%  7d 79%  Today: $119.63 · 307M/~30 Days: $1,448.86 · 3.4B Tokens
 ```
 
+## Showcase
+
+The static product showcase lives in [`docs/showcase/`](docs/showcase/). It can be served directly by GitHub Pages and used as the source for README screenshots or GIF recordings.
+
 ## 功能
 
 - 显示 Codex 5h 和 7d 窗口的剩余百分比。
