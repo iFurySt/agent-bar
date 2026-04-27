@@ -18,15 +18,17 @@
 
 - **[Auto Update]**: `Automatic Updates` 现在控制 Sparkle 的自动下载/安装模式；更新检查保持开启，勾选后准备安装时直接交给 Sparkle 重启安装，不再弹确认。
 - **[Manual Prompt]**: 未开启自动更新时，下载完成确认框增加 `Turn On Automatic Updates`，选择后会开启后续自动更新并安装当前版本。
+- **[Completion Notification]**: 安装前记录旧版本和目标版本，新版本启动后发送一次 macOS 通知提示已从旧版本升级到新版本，并清理待通知记录避免重复提醒。
 - **[Docs]**: 同步架构、可靠性和用户发布记录中的自动更新行为说明。
 
 ### 🧠 Design Intent (Why)
 
-用户把 `Automatic Updates` 理解为自动完成升级，而不是每次下载完仍要求确认。更新检测本身保持开启，避免关闭自动安装后就完全收不到升级提示；确认框里的“以后自动更新”给用户一个低摩擦的升级偏好切换入口。
+用户把 `Automatic Updates` 理解为自动完成升级，而不是每次下载完仍要求确认。更新检测本身保持开启，避免关闭自动安装后就完全收不到升级提示；确认框里的“以后自动更新”给用户一个低摩擦的升级偏好切换入口。自动安装本身不应打断用户，但完成后仍需要一个轻量感知点，所以用系统通知告知版本变化。
 
 ### 📁 Files Modified
 
 - `Sources/AgentBar/AgentBarUpdater.swift`
+- `Sources/AgentBar/App.swift`
 - `docs/ARCHITECTURE.md`
 - `docs/RELIABILITY.md`
 - `docs/releases/feature-release-notes.md`

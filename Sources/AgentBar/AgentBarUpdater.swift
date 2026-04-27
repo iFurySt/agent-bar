@@ -1,5 +1,6 @@
 import AppKit
 import Sparkle
+import UserNotifications
 
 @MainActor
 final class AgentBarUpdater: NSObject, SPUUpdaterDelegate {
@@ -53,6 +54,10 @@ final class AgentBarUpdater: NSObject, SPUUpdaterDelegate {
 
     func updater(_: SPUUpdater, shouldDownloadReleaseNotesForUpdate _: SUAppcastItem) -> Bool {
         false
+    }
+
+    func updater(_: SPUUpdater, willInstallUpdate item: SUAppcastItem) {
+        AgentBarUpdateCompletionNotifier.rememberPendingUpdate(to: item)
     }
 
     private func syncAutomaticUpdateMode() {
@@ -236,5 +241,84 @@ final class AgentBarUpdateUserDriver: NSObject, SPUUserDriver {
         let bytes = max(expectedContentLength, receivedContentLength)
         guard bytes > 0 else { return nil }
         return "Downloaded \(ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file))."
+    }
+}
+
+@MainActor
+enum AgentBarUpdateCompletionNotifier {
+    private static let pendingFromVersionKey = "AgentBar.updater.pendingFromVersion"
+    private static let pendingToVersionKey = "AgentBar.updater.pendingToVersion"
+    private static let deliveredVersionKey = "AgentBar.updater.deliveredCompletionVersion"
+
+    static func rememberPendingUpdate(to item: SUAppcastItem, defaults: UserDefaults = .standard) {
+        defaults.set(currentDisplayVersion, forKey: pendingFromVersionKey)
+        defaults.set(displayVersion(for: item), forKey: pendingToVersionKey)
+    }
+
+    static func deliverPendingNotificationIfNeeded(defaults: UserDefaults = .standard) {
+        guard let fromVersion = defaults.string(forKey: pendingFromVersionKey),
+              let toVersion = defaults.string(forKey: pendingToVersionKey),
+              toVersion == currentDisplayVersion,
+              defaults.string(forKey: deliveredVersionKey) != toVersion
+        else {
+            clearPendingUpdate(defaults: defaults)
+            return
+        }
+
+        defaults.set(toVersion, forKey: deliveredVersionKey)
+        clearPendingUpdate(defaults: defaults)
+
+        Task {
+            await deliverNotification(fromVersion: fromVersion, toVersion: toVersion)
+        }
+    }
+
+    private static func deliverNotification(fromVersion: String, toVersion: String) async {
+        let center = UNUserNotificationCenter.current()
+        do {
+            let settings = await center.notificationSettings()
+            switch settings.authorizationStatus {
+            case .authorized, .provisional, .ephemeral:
+                break
+            case .notDetermined:
+                let granted = try await center.requestAuthorization(options: [.alert])
+                guard granted else { return }
+            case .denied:
+                return
+            @unknown default:
+                return
+            }
+
+            let content = UNMutableNotificationContent()
+            content.title = "AgentBar Updated"
+            content.body = "Updated from \(fromVersion) to \(toVersion)."
+            let request = UNNotificationRequest(
+                identifier: "agentbar.update-completed.\(toVersion)",
+                content: content,
+                trigger: nil)
+            try await center.add(request)
+        } catch {
+            NSLog("AgentBar update notification failed: \(error.localizedDescription)")
+        }
+    }
+
+    private static func clearPendingUpdate(defaults: UserDefaults) {
+        defaults.removeObject(forKey: pendingFromVersionKey)
+        defaults.removeObject(forKey: pendingToVersionKey)
+    }
+
+    private static func displayVersion(for item: SUAppcastItem) -> String {
+        item.displayVersionString.isEmpty ? item.versionString : item.displayVersionString
+    }
+
+    private static var currentDisplayVersion: String {
+        let info = Bundle.main.infoDictionary
+        if let shortVersion = info?["CFBundleShortVersionString"] as? String, !shortVersion.isEmpty {
+            return shortVersion
+        }
+        if let bundleVersion = info?["CFBundleVersion"] as? String, !bundleVersion.isEmpty {
+            return bundleVersion
+        }
+        return "unknown"
     }
 }

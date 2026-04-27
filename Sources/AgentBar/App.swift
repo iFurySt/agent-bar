@@ -72,6 +72,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let updater = AgentBarUpdater()
 
     func applicationDidFinishLaunching(_: Notification) {
+        AgentBarUpdateCompletionNotifier.deliverPendingNotificationIfNeeded()
         updater.start()
 
         let controller = IslandWindowController(updater: updater)
