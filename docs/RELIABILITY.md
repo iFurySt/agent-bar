@@ -7,8 +7,8 @@
 - 顶部浮窗每 60 秒刷新一次。
 - 启动时先读取 `~/.agentbar/cache.json` 里的最后一次完整快照，避免空白或长时间 `--%`。
 - Codex usage API 读取失败时，使用最近 session 中的 rate limit 事件兜底。
-- 本地 cost 扫描默认读取最近约 30 天 `~/.codex/sessions/YYYY/MM/DD/*.jsonl`；设置页 Usage 按所选年份读取 Jan-Dec 并补捞最近修改过的旧日期目录文件。
-- token/cost 缓存按 session 文件的 size/mtime 复用，未变化文件不会重复解析；日级 Usage 直接复用同一份 `~/.agentbar/cache.json` 聚合。
+- 本地 cost 扫描默认读取最近约 30 天 `~/.codex/sessions/YYYY/MM/DD/*.jsonl`；设置页 Usage 按所选年份读取 Jan-Dec，Day 视图按选中的自然日读取 00-23 点，并补捞最近修改过的旧日期目录文件。
+- token/cost 缓存按 session 文件的 size/mtime 复用，未变化文件不会重复解析；日级和小时级 Usage 直接复用同一份 `~/.agentbar/cache.json` 聚合。
 - 每轮刷新按 session 文件 size/mtime 复用缓存，只重算新增或更新过的文件。
 - cost/token 扫描在后台任务中运行，避免阻塞 AppKit 主线程。
 - 后台刷新保持静默，不显示状态点，避免快速刷新时造成视觉闪烁。

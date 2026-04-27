@@ -40,6 +40,48 @@ public struct CodexDailyTokenUsageSnapshot: Equatable, Sendable {
     }
 }
 
+public struct CodexHourlyModelTokenUsage: Equatable, Sendable {
+    public let model: String
+    public let tokens: Int
+    public let costUSD: Double
+
+    public init(model: String, tokens: Int, costUSD: Double) {
+        self.model = model
+        self.tokens = tokens
+        self.costUSD = costUSD
+    }
+}
+
+public struct CodexHourlyTokenUsage: Equatable, Sendable {
+    public let hour: Int
+    public let models: [CodexHourlyModelTokenUsage]
+    public let totalTokens: Int
+    public let costUSD: Double
+
+    public init(hour: Int, models: [CodexHourlyModelTokenUsage]) {
+        self.hour = hour
+        self.models = models
+        self.totalTokens = models.reduce(0) { $0 + $1.tokens }
+        self.costUSD = models.reduce(0) { $0 + $1.costUSD }
+    }
+}
+
+public struct CodexHourlyTokenUsageSnapshot: Equatable, Sendable {
+    public let day: Date
+    public let dayKey: String
+    public let hours: [CodexHourlyTokenUsage]
+    public let totalTokens: Int
+    public let maxHourlyTokens: Int
+
+    public init(day: Date, dayKey: String, hours: [CodexHourlyTokenUsage]) {
+        self.day = day
+        self.dayKey = dayKey
+        self.hours = hours
+        self.totalTokens = hours.reduce(0) { $0 + $1.totalTokens }
+        self.maxHourlyTokens = hours.map(\.totalTokens).max() ?? 0
+    }
+}
+
 public final class CodexCostScanner: @unchecked Sendable {
     private let sessionsRoot: URL
     private let calendar: Calendar
@@ -141,6 +183,32 @@ public final class CodexCostScanner: @unchecked Sendable {
         return CodexDailyTokenUsageSnapshot(days: entries)
     }
 
+    public func hourlyTokenUsage(on date: Date = Date()) -> CodexHourlyTokenUsageSnapshot {
+        let dayStart = calendar.startOfDay(for: date)
+        let dayKey = Self.dayKey(for: dayStart, calendar: calendar)
+        let files = sessionFiles(since: dayStart, through: dayStart)
+        let totalsByHour = scanHours(files: files, dayKey: dayKey)
+        let modelOrder = ["gpt-5.5", "gpt-5.4", "claude-3.7-sonnet", "gemini-1.5-pro"]
+
+        let hours = (0..<24).map { hour in
+            let hourKey = Self.hourKey(hour)
+            let models = totalsByHour[hourKey] ?? [:]
+            let entries = models
+                .map { model, totals in
+                    CodexHourlyModelTokenUsage(model: model, tokens: totals.totalTokens, costUSD: totals.costUSD)
+                }
+                .sorted { lhs, rhs in
+                    let leftIndex = modelOrder.firstIndex(of: lhs.model) ?? modelOrder.count
+                    let rightIndex = modelOrder.firstIndex(of: rhs.model) ?? modelOrder.count
+                    if leftIndex != rightIndex { return leftIndex < rightIndex }
+                    return lhs.model < rhs.model
+                }
+            return CodexHourlyTokenUsage(hour: hour, models: entries)
+        }
+
+        return CodexHourlyTokenUsageSnapshot(day: dayStart, dayKey: dayKey, hours: hours)
+    }
+
     public func usageYearRange(now: Date = Date()) -> ClosedRange<Int> {
         let currentYear = calendar.component(.year, from: now)
         var years = Set([currentYear])
@@ -189,8 +257,9 @@ public final class CodexCostScanner: @unchecked Sendable {
                 fileDays = cached.days
                 updatedFiles[file.path] = cached
             } else {
-                fileDays = parseFile(file)
-                updatedFiles[file.path] = CachedCostFile(metadata: metadata, days: fileDays)
+                let parsed = parseFile(file)
+                fileDays = parsed.days
+                updatedFiles[file.path] = CachedCostFile(metadata: metadata, days: parsed.days, hours: parsed.hours)
             }
 
             for (day, models) in fileDays where day >= sinceKey && day <= todayKey {
@@ -207,6 +276,43 @@ public final class CodexCostScanner: @unchecked Sendable {
         }
 
         return days
+    }
+
+    private func scanHours(files: [URL], dayKey: String) -> [String: [String: TokenTotals]] {
+        let cache = cacheStore?.load() ?? .empty
+        var updatedFiles: [String: CachedCostFile] = [:]
+        var hours: [String: [String: TokenTotals]] = [:]
+
+        for file in files {
+            guard let metadata = CachedFileMetadata(fileURL: file) else { continue }
+            let fileHours: [String: [String: [String: TokenTotals]]]
+            if let cached = cache.costFiles[file.path],
+               cached.metadata == metadata,
+               !cached.needsPricingRefresh,
+               let cachedHours = cached.hours
+            {
+                fileHours = cachedHours
+                updatedFiles[file.path] = cached
+            } else {
+                let parsed = parseFile(file)
+                fileHours = parsed.hours
+                updatedFiles[file.path] = CachedCostFile(metadata: metadata, days: parsed.days, hours: parsed.hours)
+            }
+
+            for (hour, models) in fileHours[dayKey] ?? [:] {
+                for (model, totals) in models {
+                    hours[hour, default: [:]][model, default: .zero].add(totals: totals, model: model)
+                }
+            }
+        }
+
+        cacheStore?.update { cache in
+            for (path, file) in updatedFiles {
+                cache.costFiles[path] = file
+            }
+        }
+
+        return hours
     }
 
     private func sessionFiles(since: Date, through now: Date) -> [URL] {
@@ -269,10 +375,11 @@ public final class CodexCostScanner: @unchecked Sendable {
         return files
     }
 
-    private func parseFile(_ fileURL: URL) -> [String: [String: TokenTotals]] {
+    private func parseFile(_ fileURL: URL) -> ParsedCostFile {
         var currentModel = "gpt-5"
         var previousTotals: RawTokenTotals?
         var days: [String: [String: TokenTotals]] = [:]
+        var hours: [String: [String: [String: TokenTotals]]] = [:]
 
         JSONLLineScanner.scan(fileURL: fileURL) { data in
             guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -332,10 +439,14 @@ public final class CodexCostScanner: @unchecked Sendable {
                 cached: min(delta.cached, delta.input),
                 output: delta.output)
             let dayKey = Self.dayKey(for: date, calendar: calendar)
+            let hourKey = Self.hourKey(calendar.component(.hour, from: date))
             days[dayKey, default: [:]][normalizedModel, default: .zero].add(raw: clampedDelta, model: normalizedModel)
+            hours[dayKey, default: [:]][hourKey, default: [:]][normalizedModel, default: .zero].add(
+                raw: clampedDelta,
+                model: normalizedModel)
         }
 
-        return days
+        return ParsedCostFile(days: days, hours: hours)
     }
 
     static func parseTimestamp(_ value: String) -> Date? {
@@ -350,6 +461,15 @@ public final class CodexCostScanner: @unchecked Sendable {
         let components = calendar.dateComponents([.year, .month, .day], from: date)
         return String(format: "%04d-%02d-%02d", components.year ?? 0, components.month ?? 0, components.day ?? 0)
     }
+
+    static func hourKey(_ hour: Int) -> String {
+        String(format: "%02d", max(0, min(23, hour)))
+    }
+}
+
+private struct ParsedCostFile {
+    let days: [String: [String: TokenTotals]]
+    let hours: [String: [String: [String: TokenTotals]]]
 }
 
 private struct RawTokenTotals {

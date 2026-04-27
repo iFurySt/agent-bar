@@ -230,4 +230,44 @@ final class CodexCostScannerTests: XCTestCase {
         XCTAssertEqual(usage.days.first { $0.dayKey == "2026-04-25" }?.tokens, 350)
         XCTAssertEqual(scanner.usageYearRange(now: now), 2026...2026)
     }
+
+    func testHourlyUsageSplitsTodayByHourAndModel() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let dayDir = root
+            .appendingPathComponent("2026", isDirectory: true)
+            .appendingPathComponent("04", isDirectory: true)
+            .appendingPathComponent("25", isDirectory: true)
+        try FileManager.default.createDirectory(at: dayDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let file = dayDir.appendingPathComponent("rollout-hourly.jsonl")
+        let lines = [
+            #"{"timestamp":"2026-04-25T08:00:00.000Z","type":"turn_context","payload":{"model":"gpt-5.5"}}"#,
+            #"{"timestamp":"2026-04-25T08:10:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000,"cached_input_tokens":100,"output_tokens":100}}}}"#,
+            #"{"timestamp":"2026-04-25T09:00:00.000Z","type":"turn_context","payload":{"model":"gpt-5.4"}}"#,
+            #"{"timestamp":"2026-04-25T09:05:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":300,"cached_input_tokens":20,"output_tokens":50}}}}"#,
+            #"{"timestamp":"2026-04-24T09:05:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":900,"cached_input_tokens":0,"output_tokens":100}}}}"#,
+        ].joined(separator: "\n")
+        try lines.write(to: file, atomically: true, encoding: .utf8)
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let scanner = CodexCostScanner(
+            sessionsRoot: root,
+            calendar: calendar,
+            cacheStore: AgentBarCacheStore(fileURL: root.appendingPathComponent("cache.json")))
+        let now = CodexCostScanner.parseTimestamp("2026-04-25T12:00:00.000Z")!
+
+        let usage = scanner.hourlyTokenUsage(on: now)
+
+        XCTAssertEqual(usage.dayKey, "2026-04-25")
+        XCTAssertEqual(usage.hours.count, 24)
+        XCTAssertEqual(usage.hours[8].models.map(\.model), ["gpt-5.5"])
+        XCTAssertEqual(usage.hours[8].totalTokens, 1_100)
+        XCTAssertEqual(usage.hours[9].models.map(\.model), ["gpt-5.4"])
+        XCTAssertEqual(usage.hours[9].totalTokens, 350)
+        XCTAssertEqual(usage.totalTokens, 1_450)
+        XCTAssertEqual(usage.maxHourlyTokens, 1_100)
+    }
 }

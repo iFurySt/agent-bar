@@ -9,12 +9,17 @@ enum SettingsPage {
     case about
 }
 
+private enum UsageViewMode: Int {
+    case day = 0
+    case year = 1
+}
+
 @MainActor
 final class AgentBarSettingsWindowController: NSWindowController, NSWindowDelegate {
     var onClose: (() -> Void)?
     private let settingsViewController: AgentBarSettingsViewController
     private static let defaultWindowSize = NSSize(width: 640, height: 420)
-    private static let minimumWindowSize = NSSize(width: 560, height: 380)
+    private static let minimumWindowSize = NSSize(width: 480, height: 380)
 
     init(
         updater: AgentBarUpdater,
@@ -109,16 +114,31 @@ final class AgentBarSettingsViewController: NSViewController {
     private var accountsListHeightConstraint: NSLayoutConstraint?
     private var contentBottomConstraint: NSLayoutConstraint?
     private let usageCard = SettingsCardView()
+    private let usageModeControl = NSSegmentedControl(labels: ["Day", "Year"], trackingMode: .selectOne, target: nil, action: nil)
+    private let usageDayChartView = TokenUsageHourlyChartView()
     private let usageHeatmapScrollView = NSScrollView()
     private let usageHeatmapView = TokenUsageHeatmapView()
     private let usageTooltipOverlayView = UsageTooltipOverlayView()
     private let usageSummaryLabel = NSTextField(labelWithString: "Scanning local Codex sessions...")
     private var usageHeaderContainer: NSView?
+    private var usageDayControl: NSView?
+    private let usagePreviousDayButton = SettingsIconButton(symbolName: "chevron.left", accessibilityDescription: "Previous day")
+    private let usageNextDayButton = SettingsIconButton(symbolName: "chevron.right", accessibilityDescription: "Next day")
+    private let usageDayLabel = NSTextField(labelWithString: "")
+    private var usageYearControl: NSView?
     private let usagePreviousYearButton = SettingsIconButton(symbolName: "chevron.left", accessibilityDescription: "Previous year")
     private let usageNextYearButton = SettingsIconButton(symbolName: "chevron.right", accessibilityDescription: "Next year")
     private let usageYearLabel = NSTextField(labelWithString: "")
+    private var usageViewMode: UsageViewMode = .year
+    private var selectedUsageDay = Calendar.current.startOfDay(for: Date())
     private var selectedUsageYear = Calendar.current.component(.year, from: Date())
     private var usageYearRange = Calendar.current.component(.year, from: Date())...Calendar.current.component(.year, from: Date())
+    private let usageDayFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "MMMM d, yyyy"
+        return formatter
+    }()
     private let aboutCard = SettingsCardView()
     private var selectedPage: SettingsPage = .general
 
@@ -186,17 +206,32 @@ final class AgentBarSettingsViewController: NSViewController {
                 self?.usageTooltipOverlayView.hoveredItem = nil
                 return
             }
+            usageTooltipOverlayView.hoveredHourItem = nil
             usageTooltipOverlayView.hoveredItem = (
                 rect: usageHeatmapView.convert(rect, to: usageTooltipOverlayView),
                 entry: entry)
         }
+        usageDayChartView.onHoverChanged = { [weak self] point, hour, buckets in
+            guard let self, let point, let hour else {
+                self?.usageTooltipOverlayView.hoveredHourItem = nil
+                return
+            }
+            usageTooltipOverlayView.hoveredItem = nil
+            usageTooltipOverlayView.hoveredHourItem = UsageHourlyTooltipItem(
+                point: usageDayChartView.convert(point, to: usageTooltipOverlayView),
+                hour: hour,
+                buckets: buckets)
+        }
         configureScrollView(usageHeatmapScrollView, vertical: false, horizontal: true)
+        usageDayChartView.isHidden = true
+        usageDayChartView.translatesAutoresizingMaskIntoConstraints = false
         usageHeatmapView.frame = NSRect(
             x: 0,
             y: 0,
             width: TokenUsageHeatmapView.contentWidth,
             height: TokenUsageHeatmapView.contentHeight)
         usageHeatmapScrollView.documentView = usageHeatmapView
+        usageCard.addSubview(usageDayChartView)
         usageCard.addSubview(usageHeatmapScrollView)
 
         let aboutStack = NSStackView(views: [githubRow])
@@ -229,6 +264,7 @@ final class AgentBarSettingsViewController: NSViewController {
             accountsCard,
             usageHeader,
             usageCard,
+            usageDayChartView,
             usageHeatmapScrollView,
             aboutCard,
             usageTooltipOverlayView,
@@ -316,6 +352,12 @@ final class AgentBarSettingsViewController: NSViewController {
             usageHeatmapScrollView.topAnchor.constraint(equalTo: usageCard.topAnchor, constant: 16),
             usageHeatmapScrollView.bottomAnchor.constraint(equalTo: usageCard.bottomAnchor, constant: -16),
             usageHeatmapScrollView.heightAnchor.constraint(equalToConstant: TokenUsageHeatmapView.contentHeight),
+
+            usageDayChartView.leadingAnchor.constraint(equalTo: usageCard.leadingAnchor, constant: 16),
+            usageDayChartView.trailingAnchor.constraint(equalTo: usageCard.trailingAnchor, constant: -16),
+            usageDayChartView.topAnchor.constraint(equalTo: usageCard.topAnchor, constant: 16),
+            usageDayChartView.bottomAnchor.constraint(equalTo: usageCard.bottomAnchor, constant: -16),
+            usageDayChartView.heightAnchor.constraint(equalToConstant: TokenUsageHourlyChartView.contentHeight),
 
             githubRow.widthAnchor.constraint(equalTo: aboutStack.widthAnchor),
             githubRow.heightAnchor.constraint(equalToConstant: 48),
@@ -435,11 +477,38 @@ final class AgentBarSettingsViewController: NSViewController {
         titleLabel.textColor = .labelColor
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        usageSummaryLabel.font = .monospacedDigitSystemFont(ofSize: 11.4, weight: .regular)
+        usageSummaryLabel.font = .monospacedDigitSystemFont(ofSize: 11.4, weight: .medium)
         usageSummaryLabel.textColor = .secondaryLabelColor
         usageSummaryLabel.alignment = .right
         usageSummaryLabel.lineBreakMode = .byTruncatingMiddle
+        usageSummaryLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        usageSummaryLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         usageSummaryLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        usageModeControl.segmentStyle = .rounded
+        usageModeControl.controlSize = .small
+        usageModeControl.selectedSegment = usageViewMode.rawValue
+        usageModeControl.target = self
+        usageModeControl.action = #selector(usageModeChanged(_:))
+        usageModeControl.translatesAutoresizingMaskIntoConstraints = false
+
+        usageDayLabel.font = .systemFont(ofSize: 12.4, weight: .semibold)
+        usageDayLabel.textColor = .labelColor
+        usageDayLabel.alignment = .center
+        usageDayLabel.lineBreakMode = .byTruncatingMiddle
+        usageDayLabel.translatesAutoresizingMaskIntoConstraints = false
+        usagePreviousDayButton.target = self
+        usagePreviousDayButton.action = #selector(previousUsageDay)
+        usageNextDayButton.target = self
+        usageNextDayButton.action = #selector(nextUsageDay)
+
+        let dayControl = NSStackView(views: [usagePreviousDayButton, usageDayLabel, usageNextDayButton])
+        dayControl.orientation = .horizontal
+        dayControl.alignment = .centerY
+        dayControl.spacing = 4
+        dayControl.translatesAutoresizingMaskIntoConstraints = false
+        usageDayControl = dayControl
+
         usageYearLabel.font = .monospacedDigitSystemFont(ofSize: 12.4, weight: .semibold)
         usageYearLabel.textColor = .labelColor
         usageYearLabel.alignment = .center
@@ -454,20 +523,36 @@ final class AgentBarSettingsViewController: NSViewController {
         yearControl.alignment = .centerY
         yearControl.spacing = 4
         yearControl.translatesAutoresizingMaskIntoConstraints = false
+        usageYearControl = yearControl
 
         container.addSubview(titleLabel)
+        container.addSubview(usageModeControl)
+        container.addSubview(dayControl)
         container.addSubview(yearControl)
         container.addSubview(usageSummaryLabel)
 
         NSLayoutConstraint.activate([
-            container.heightAnchor.constraint(equalToConstant: 20),
+            container.heightAnchor.constraint(equalToConstant: 56),
 
             titleLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            titleLabel.centerYAnchor.constraint(equalTo: container.centerYAnchor),
-            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: yearControl.leadingAnchor, constant: -18),
+            titleLabel.centerYAnchor.constraint(equalTo: usageModeControl.centerYAnchor),
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: usageModeControl.leadingAnchor, constant: -18),
+
+            usageModeControl.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            usageModeControl.topAnchor.constraint(equalTo: container.topAnchor),
+            usageModeControl.widthAnchor.constraint(equalToConstant: 124),
+            usageModeControl.heightAnchor.constraint(equalToConstant: 24),
+
+            dayControl.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            dayControl.topAnchor.constraint(equalTo: usageModeControl.bottomAnchor, constant: 8),
+            usagePreviousDayButton.widthAnchor.constraint(equalToConstant: 22),
+            usagePreviousDayButton.heightAnchor.constraint(equalToConstant: 22),
+            usageNextDayButton.widthAnchor.constraint(equalToConstant: 22),
+            usageNextDayButton.heightAnchor.constraint(equalToConstant: 22),
+            usageDayLabel.widthAnchor.constraint(equalToConstant: 138),
 
             yearControl.centerXAnchor.constraint(equalTo: container.centerXAnchor),
-            yearControl.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+            yearControl.topAnchor.constraint(equalTo: usageModeControl.bottomAnchor, constant: 8),
             usagePreviousYearButton.widthAnchor.constraint(equalToConstant: 22),
             usagePreviousYearButton.heightAnchor.constraint(equalToConstant: 22),
             usageNextYearButton.widthAnchor.constraint(equalToConstant: 22),
@@ -475,7 +560,8 @@ final class AgentBarSettingsViewController: NSViewController {
             usageYearLabel.widthAnchor.constraint(equalToConstant: 48),
 
             usageSummaryLabel.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            usageSummaryLabel.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+            usageSummaryLabel.centerYAnchor.constraint(equalTo: yearControl.centerYAnchor),
+            usageSummaryLabel.leadingAnchor.constraint(greaterThanOrEqualTo: dayControl.trailingAnchor, constant: 18),
             usageSummaryLabel.leadingAnchor.constraint(greaterThanOrEqualTo: yearControl.trailingAnchor, constant: 18),
         ])
 
@@ -535,12 +621,13 @@ final class AgentBarSettingsViewController: NSViewController {
     private func refreshUsage() {
         let scanner = CodexCostScanner()
         let year = selectedUsageYear
+        let day = selectedUsageDay
         let task = Task.detached(priority: .utility) {
-            (scanner.yearlyTokenUsage(year: year), scanner.usageYearRange())
+            (scanner.yearlyTokenUsage(year: year), scanner.usageYearRange(), scanner.hourlyTokenUsage(on: day))
         }
         Task { [weak self] in
-            let (snapshot, yearRange) = await task.value
-            self?.applyUsage(snapshot, yearRange: yearRange, year: year)
+            let (snapshot, yearRange, hourlySnapshot) = await task.value
+            self?.applyUsage(snapshot, yearRange: yearRange, year: year, day: day, hourlySnapshot: hourlySnapshot)
         }
     }
 
@@ -556,14 +643,41 @@ final class AgentBarSettingsViewController: NSViewController {
         updateContentBottomConstraint(for: selectedPage)
     }
 
-    private func applyUsage(_ snapshot: CodexDailyTokenUsageSnapshot, yearRange: ClosedRange<Int>, year: Int) {
+    private func applyUsage(
+        _ snapshot: CodexDailyTokenUsageSnapshot,
+        yearRange: ClosedRange<Int>,
+        year: Int,
+        day: Date,
+        hourlySnapshot: CodexHourlyTokenUsageSnapshot)
+    {
         usageYearRange = yearRange
         selectedUsageYear = min(max(year, yearRange.lowerBound), yearRange.upperBound)
+        selectedUsageDay = Calendar.current.startOfDay(for: day)
         usageHeatmapView.snapshot = snapshot
-        usageSummaryLabel.stringValue = "\(Self.formatTokens(snapshot.totalTokens)) tokens in \(selectedUsageYear)"
+        usageDayChartView.snapshot = hourlySnapshot
         usageYearLabel.stringValue = "\(selectedUsageYear)"
         usagePreviousYearButton.isEnabled = selectedUsageYear > usageYearRange.lowerBound
         usageNextYearButton.isEnabled = selectedUsageYear < usageYearRange.upperBound
+        updateUsageDayControls()
+        updateUsageSummaryLabel()
+        updateUsageModeVisibility()
+    }
+
+    @objc private func previousUsageDay() {
+        guard let day = Calendar.current.date(byAdding: .day, value: -1, to: selectedUsageDay) else { return }
+        selectedUsageDay = Calendar.current.startOfDay(for: day)
+        updateUsageDayControls()
+        refreshUsage()
+    }
+
+    @objc private func nextUsageDay() {
+        let today = Calendar.current.startOfDay(for: Date())
+        guard selectedUsageDay < today,
+              let day = Calendar.current.date(byAdding: .day, value: 1, to: selectedUsageDay)
+        else { return }
+        selectedUsageDay = min(Calendar.current.startOfDay(for: day), today)
+        updateUsageDayControls()
+        refreshUsage()
     }
 
     @objc private func previousUsageYear() {
@@ -615,7 +729,7 @@ final class AgentBarSettingsViewController: NSViewController {
         accountsCard.isHidden = page != .accounts
         usageHeaderContainer?.isHidden = page != .usage
         usageCard.isHidden = page != .usage
-        usageTooltipOverlayView.isHidden = page != .usage
+        updateUsageModeVisibility()
         aboutCard.isHidden = page != .about
         sidebar.select(page)
         updateContentBottomConstraint(for: page)
@@ -642,6 +756,46 @@ final class AgentBarSettingsViewController: NSViewController {
 
     private static func formatTokens(_ tokens: Int) -> String {
         AgentBarDisplayFormatting.tokens(tokens)
+    }
+
+    private func updateUsageSummaryLabel() {
+        switch usageViewMode {
+        case .day:
+            usageSummaryLabel.stringValue = "Total \(Self.formatTokens(usageDayChartView.snapshot.totalTokens)) Tokens"
+        case .year:
+            usageSummaryLabel.stringValue = "Total \(Self.formatTokens(usageHeatmapView.snapshot.totalTokens)) Tokens"
+        }
+    }
+
+    private func updateUsageDayControls() {
+        usageDayLabel.stringValue = usageDayFormatter.string(from: selectedUsageDay)
+        usageNextDayButton.isEnabled = selectedUsageDay < Calendar.current.startOfDay(for: Date())
+    }
+
+    private func updateUsageModeVisibility() {
+        usageModeControl.selectedSegment = usageViewMode.rawValue
+        let showingUsage = selectedPage == .usage
+        let showingYear = showingUsage && usageViewMode == .year
+        let showingDay = showingUsage && usageViewMode == .day
+        usageDayControl?.isHidden = !showingDay
+        usageYearControl?.isHidden = !showingYear
+        usageSummaryLabel.isHidden = !(showingYear || showingDay)
+        usageHeatmapScrollView.isHidden = !showingYear
+        usageDayChartView.isHidden = !showingDay
+        usageTooltipOverlayView.isHidden = !showingUsage
+        updateUsageSummaryLabel()
+        if !showingYear {
+            usageTooltipOverlayView.hoveredItem = nil
+        }
+        if !showingDay {
+            usageTooltipOverlayView.hoveredHourItem = nil
+        }
+    }
+
+    @objc private func usageModeChanged(_ sender: NSSegmentedControl) {
+        guard let mode = UsageViewMode(rawValue: sender.selectedSegment), usageViewMode != mode else { return }
+        usageViewMode = mode
+        updateUsageModeVisibility()
     }
 
     @objc private func openGitHub() {
@@ -1510,8 +1664,24 @@ final class TokenUsageHeatmapView: NSView {
     }
 }
 
+fileprivate struct UsageHourlyTooltipItem {
+    let point: NSPoint
+    let hour: CodexHourlyTokenUsage
+    let buckets: [UsageHourlyTooltipBucket]
+}
+
+fileprivate struct UsageHourlyTooltipBucket {
+    let title: String
+    let tokens: Int
+}
+
 final class UsageTooltipOverlayView: NSView {
     var hoveredItem: (rect: NSRect, entry: CodexDailyTokenUsage)? {
+        didSet {
+            needsDisplay = true
+        }
+    }
+    fileprivate var hoveredHourItem: UsageHourlyTooltipItem? {
         didSet {
             needsDisplay = true
         }
@@ -1534,11 +1704,405 @@ final class UsageTooltipOverlayView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
-        guard let hoveredItem else { return }
-        TokenUsageHeatmapView.drawTooltip(
-            for: hoveredItem,
-            in: bounds,
-            dateFormatter: dateFormatter)
+        if let hoveredHourItem {
+            drawHourlyTooltip(hoveredHourItem)
+        } else if let hoveredItem {
+            TokenUsageHeatmapView.drawTooltip(
+                for: hoveredItem,
+                in: bounds,
+                dateFormatter: dateFormatter)
+        }
+    }
+
+    private func drawHourlyTooltip(_ item: UsageHourlyTooltipItem) {
+        let title = String(format: "%02d:00", item.hour.hour)
+        let total = "\(AgentBarDisplayFormatting.tokens(item.hour.totalTokens)) Tokens"
+        let bucketSummary = item.buckets
+            .filter { $0.tokens > 0 }
+            .map { "\($0.title) \(AgentBarDisplayFormatting.tokens($0.tokens))" }
+            .joined(separator: "  ")
+
+        let titleAttributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 12.6, weight: .semibold),
+            .foregroundColor: NSColor.white,
+        ]
+        let totalAttributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 11.8, weight: .medium),
+            .foregroundColor: AgentBarSettingsPalette.heatmapTooltipTokens,
+        ]
+        let modelAttributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 10.8, weight: .regular),
+            .foregroundColor: NSColor(calibratedWhite: 0.88, alpha: 1),
+        ]
+
+        let titleSize = title.size(withAttributes: titleAttributes)
+        let totalSize = total.size(withAttributes: totalAttributes)
+        let modelSize = bucketSummary.size(withAttributes: modelAttributes)
+        let width = min(
+            max(132, max(titleSize.width, totalSize.width, modelSize.width) + 24),
+            max(132, bounds.width - 12))
+        let height: CGFloat = bucketSummary.isEmpty ? 56 : 76
+        let preferredX = item.point.x - width / 2
+        let x = min(max(6, preferredX), max(6, bounds.width - width - 6))
+        let preferredY = item.point.y + 18
+        let y = min(max(6, preferredY), max(6, bounds.maxY - height - 6))
+        let rect = NSRect(x: x, y: y, width: width, height: height)
+
+        AgentBarSettingsPalette.heatmapTooltipBackground.setFill()
+        NSBezierPath(roundedRect: rect, xRadius: 7, yRadius: 7).fill()
+
+        let pointer = NSBezierPath()
+        let pointerX = min(max(item.point.x, rect.minX + 14), rect.maxX - 14)
+        pointer.move(to: NSPoint(x: pointerX - 7, y: rect.minY))
+        pointer.line(to: NSPoint(x: pointerX, y: rect.minY - 8))
+        pointer.line(to: NSPoint(x: pointerX + 7, y: rect.minY))
+        pointer.close()
+        pointer.fill()
+
+        title.draw(at: NSPoint(x: rect.minX + 12, y: rect.maxY - 22), withAttributes: titleAttributes)
+        total.draw(at: NSPoint(x: rect.minX + 12, y: rect.maxY - 42), withAttributes: totalAttributes)
+        if !bucketSummary.isEmpty {
+            bucketSummary.draw(
+                in: NSRect(x: rect.minX + 12, y: rect.minY + 10, width: rect.width - 24, height: 16),
+                withAttributes: modelAttributes)
+        }
+    }
+}
+
+final class TokenUsageHourlyChartView: NSView {
+    static let contentHeight: CGFloat = TokenUsageHeatmapView.contentHeight
+
+    var snapshot = CodexHourlyTokenUsageSnapshot(day: Date(), dayKey: "", hours: []) {
+        didSet {
+            hoveredHour = nil
+            onHoverChanged?(nil, nil, [])
+            needsDisplay = true
+        }
+    }
+    fileprivate var onHoverChanged: ((NSPoint?, CodexHourlyTokenUsage?, [UsageHourlyTooltipBucket]) -> Void)?
+
+    private var barHitRects: [(rect: NSRect, hour: CodexHourlyTokenUsage)] = []
+    private var hoveredHour: CodexHourlyTokenUsage?
+    private var trackingArea: NSTrackingArea?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
+        setContentHuggingPriority(.defaultLow, for: .horizontal)
+        setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    }
+
+    @available(*, unavailable)
+    required init?(coder _: NSCoder) {
+        nil
+    }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: NSView.noIntrinsicMetric, height: Self.contentHeight)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+
+        let titleAttributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 11.6, weight: .semibold),
+            .foregroundColor: AgentBarSettingsPalette.heatmapLabel,
+        ]
+        "Tokens".draw(at: NSPoint(x: 0, y: bounds.maxY - 16), withAttributes: titleAttributes)
+
+        let plotRect = NSRect(x: 50, y: 58, width: max(120, bounds.width - 58), height: max(44, bounds.height - 92))
+        drawGrid(in: plotRect)
+        drawBars(in: plotRect)
+        drawHourLabels(in: plotRect)
+        drawLegend(in: NSRect(x: plotRect.minX, y: 0, width: plotRect.width, height: 34))
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea {
+            removeTrackingArea(trackingArea)
+        }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.activeAlways, .inVisibleRect, .mouseEnteredAndExited, .mouseMoved],
+            owner: self)
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        let next = barHitRects.first { $0.rect.contains(point) }?.hour
+        let nextBuckets = next.map { tooltipBuckets(for: $0.models) } ?? []
+        onHoverChanged?(next == nil ? nil : point, next, nextBuckets)
+        guard next?.hour != hoveredHour?.hour else {
+            needsDisplay = true
+            return
+        }
+        hoveredHour = next
+        needsDisplay = true
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        hoveredHour = nil
+        onHoverChanged?(nil, nil, [])
+        needsDisplay = true
+    }
+
+    private func drawGrid(in plotRect: NSRect) {
+        let maxTokens = axisMaximum
+        let labelAttributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 10.8, weight: .regular),
+            .foregroundColor: AgentBarSettingsPalette.heatmapLabel,
+        ]
+        let gridColor = AgentBarSettingsPalette.chartGrid
+        let ticks = [0, maxTokens / 2, maxTokens]
+
+        for (index, value) in ticks.enumerated() {
+            let y = plotRect.minY + CGFloat(index) / CGFloat(ticks.count - 1) * plotRect.height
+            gridColor.setStroke()
+            let path = NSBezierPath()
+            path.lineWidth = 0.7
+            path.move(to: NSPoint(x: plotRect.minX, y: y))
+            path.line(to: NSPoint(x: plotRect.maxX, y: y))
+            path.stroke()
+
+            let label = value == 0 ? "0" : AgentBarDisplayFormatting.tokens(value)
+            let size = label.size(withAttributes: labelAttributes)
+            label.draw(
+                at: NSPoint(x: plotRect.minX - size.width - 10, y: y - size.height / 2),
+                withAttributes: labelAttributes)
+        }
+    }
+
+    private func drawBars(in plotRect: NSRect) {
+        let hours = normalizedHours
+        guard !hours.isEmpty else { return }
+
+        barHitRects = []
+        let maxTokens = max(1, axisMaximum)
+        let slotWidth = plotRect.width / 24
+        let barGap = slotWidth < 8 ? 0 : min(6, slotWidth * 0.18)
+        let barWidth = max(1.5, min(13, slotWidth - barGap))
+
+        for hour in hours {
+            var y = plotRect.minY
+            let x = plotRect.minX + CGFloat(hour.hour) * slotWidth + (slotWidth - barWidth) / 2
+            let visibleBuckets = bucketedModels(hour.models).filter { $0.tokens > 0 }
+            var drawnRect: NSRect?
+            for (index, bucket) in visibleBuckets.enumerated() {
+                let height = max(1.5, CGFloat(bucket.tokens) / CGFloat(maxTokens) * plotRect.height)
+                bucket.color.setFill()
+                let rect = NSRect(x: x, y: y, width: barWidth, height: min(height, plotRect.maxY - y))
+                if index == visibleBuckets.count - 1 {
+                    Self.topRoundedBarPath(rect: rect, radius: min(2.4, rect.width / 2, rect.height / 2)).fill()
+                } else {
+                    rect.fill()
+                }
+                drawnRect = drawnRect.map { $0.union(rect) } ?? rect
+                y += height
+            }
+            if let drawnRect {
+                let hitRect = drawnRect.insetBy(dx: min(0, -max(2, slotWidth * 0.18)), dy: -3)
+                barHitRects.append((hitRect, hour))
+                if hoveredHour?.hour == hour.hour {
+                    AgentBarSettingsPalette.heatmapHoverStroke.setStroke()
+                    let path = NSBezierPath(roundedRect: drawnRect.insetBy(dx: -2, dy: -2), xRadius: 4, yRadius: 4)
+                    path.lineWidth = 1.5
+                    path.stroke()
+                }
+            }
+        }
+    }
+
+    private func drawHourLabels(in plotRect: NSRect) {
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 10.8, weight: .regular),
+            .foregroundColor: AgentBarSettingsPalette.heatmapLabel,
+        ]
+        let slotWidth = plotRect.width / 24
+        for hour in stride(from: 0, through: 24, by: 4) {
+            let label = hour == 24 ? "Hours" : String(format: "%02d", hour)
+            let size = label.size(withAttributes: attributes)
+            let x = hour == 24
+                ? plotRect.maxX - size.width
+                : plotRect.minX + CGFloat(hour) * slotWidth + slotWidth / 2 - size.width / 2
+            label.draw(at: NSPoint(x: x, y: plotRect.minY - 22), withAttributes: attributes)
+        }
+    }
+
+    private func drawLegend(in rect: NSRect) {
+        let buckets = activeModelBuckets
+        guard !buckets.isEmpty else { return }
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 10.6, weight: .medium),
+            .foregroundColor: NSColor.secondaryLabelColor,
+        ]
+        let items = buckets.map { bucket -> LegendItem in
+            let labelSize = bucket.title.size(withAttributes: attributes)
+            return LegendItem(bucket: bucket, labelSize: labelSize, width: 16 + labelSize.width)
+        }
+        let rowGap: CGFloat = 6
+        let lineHeight: CGFloat = 14
+        let rows = legendRows(items: items, maxWidth: rect.width, gap: rowGap)
+        let totalHeight = CGFloat(rows.count) * lineHeight + CGFloat(max(0, rows.count - 1)) * 4
+        var y = rect.minY + max(0, (rect.height - totalHeight) / 2) + totalHeight - lineHeight
+
+        for row in rows {
+            let rowWidth = row.reduce(CGFloat(0)) { $0 + $1.width } + CGFloat(max(0, row.count - 1)) * rowGap
+            var x = rect.minX + max(0, (rect.width - rowWidth) / 2)
+            for item in row {
+                item.bucket.color.setFill()
+                NSBezierPath(roundedRect: NSRect(x: x, y: y + 2, width: 10, height: 10), xRadius: 3, yRadius: 3).fill()
+                item.bucket.title.draw(at: NSPoint(x: x + 16, y: y - 1), withAttributes: attributes)
+                x += item.width + rowGap
+            }
+            y -= lineHeight + 4
+        }
+    }
+
+    private func legendRows(items: [LegendItem], maxWidth: CGFloat, gap: CGFloat) -> [[LegendItem]] {
+        var rows: [[LegendItem]] = []
+        var current: [LegendItem] = []
+        var currentWidth: CGFloat = 0
+        for item in items {
+            let nextWidth = current.isEmpty ? item.width : currentWidth + gap + item.width
+            if !current.isEmpty, nextWidth > maxWidth {
+                rows.append(current)
+                current = [item]
+                currentWidth = item.width
+            } else {
+                current.append(item)
+                currentWidth = nextWidth
+            }
+        }
+        if !current.isEmpty {
+            rows.append(current)
+        }
+        return rows
+    }
+
+    private static func topRoundedBarPath(rect: NSRect, radius: CGFloat) -> NSBezierPath {
+        let path = NSBezierPath()
+        path.move(to: NSPoint(x: rect.minX, y: rect.minY))
+        path.line(to: NSPoint(x: rect.maxX, y: rect.minY))
+        path.line(to: NSPoint(x: rect.maxX, y: rect.maxY - radius))
+        path.curve(
+            to: NSPoint(x: rect.maxX - radius, y: rect.maxY),
+            controlPoint1: NSPoint(x: rect.maxX, y: rect.maxY - radius * 0.45),
+            controlPoint2: NSPoint(x: rect.maxX - radius * 0.45, y: rect.maxY))
+        path.line(to: NSPoint(x: rect.minX + radius, y: rect.maxY))
+        path.curve(
+            to: NSPoint(x: rect.minX, y: rect.maxY - radius),
+            controlPoint1: NSPoint(x: rect.minX + radius * 0.45, y: rect.maxY),
+            controlPoint2: NSPoint(x: rect.minX, y: rect.maxY - radius * 0.45))
+        path.close()
+        return path
+    }
+
+    private var normalizedHours: [CodexHourlyTokenUsage] {
+        if snapshot.hours.count == 24 { return snapshot.hours }
+        return (0..<24).map { hour in
+            snapshot.hours.first { $0.hour == hour } ?? CodexHourlyTokenUsage(hour: hour, models: [])
+        }
+    }
+
+    private var axisMaximum: Int {
+        Self.niceMaximum(max(1, snapshot.maxHourlyTokens))
+    }
+
+    private func bucketedModels(_ models: [CodexHourlyModelTokenUsage]) -> [LegendBucket] {
+        var buckets = activeModelBuckets
+        for model in models {
+            guard let index = buckets.firstIndex(where: { $0.model == model.model }) else { continue }
+            buckets[index].tokens += model.tokens
+        }
+        return buckets
+    }
+
+    private func tooltipBuckets(for models: [CodexHourlyModelTokenUsage]) -> [UsageHourlyTooltipBucket] {
+        bucketedModels(models)
+            .filter { $0.tokens > 0 }
+            .map { UsageHourlyTooltipBucket(title: $0.title, tokens: $0.tokens) }
+    }
+
+    private var activeModelBuckets: [LegendBucket] {
+        var totals: [String: Int] = [:]
+        for hour in normalizedHours {
+            for model in hour.models where model.tokens > 0 {
+                totals[model.model, default: 0] += model.tokens
+            }
+        }
+        return totals
+            .sorted { lhs, rhs in
+                if lhs.value != rhs.value { return lhs.value > rhs.value }
+                return lhs.key < rhs.key
+            }
+            .enumerated()
+            .map { index, entry in
+                LegendBucket(
+                    model: entry.key,
+                    title: Self.displayName(for: entry.key),
+                    color: Self.modelColors[index % Self.modelColors.count])
+            }
+    }
+
+    private static let modelColors: [NSColor] = [
+        AgentBarSettingsPalette.chartGPT55,
+        AgentBarSettingsPalette.chartGPT54,
+        AgentBarSettingsPalette.chartClaude,
+        AgentBarSettingsPalette.chartGemini,
+        AgentBarSettingsPalette.chartOther,
+    ]
+
+    private static func niceMaximum(_ value: Int) -> Int {
+        guard value > 0 else { return 1 }
+        let exponent = floor(log10(Double(value)))
+        let magnitude = pow(10, exponent)
+        let normalized = Double(value) / magnitude
+        let nice: Double
+        switch normalized {
+        case ...1.5:
+            nice = 1.5
+        case ...2:
+            nice = 2
+        case ...5:
+            nice = 5
+        default:
+            nice = 10
+        }
+        return max(1, Int(nice * magnitude))
+    }
+
+    private struct LegendBucket {
+        let model: String
+        let title: String
+        let color: NSColor
+        var tokens: Int = 0
+    }
+
+    private struct LegendItem {
+        let bucket: LegendBucket
+        let labelSize: NSSize
+        let width: CGFloat
+    }
+
+    private static func displayName(for model: String) -> String {
+        if model.hasPrefix("gpt-") {
+            return "GPT-\(model.dropFirst("gpt-".count))"
+        }
+        let parts = model
+            .split(separator: "-")
+            .map(String.init)
+            .filter { !$0.isEmpty }
+        guard !parts.isEmpty else { return model }
+        return parts.map { part in
+            if part.lowercased() == "gpt" {
+                return "GPT"
+            }
+            return part.prefix(1).uppercased() + part.dropFirst()
+        }.joined(separator: " ")
     }
 }
 
@@ -1741,6 +2305,12 @@ enum AgentBarSettingsPalette {
     static let heatmapTooltipBackground = NSColor(hex: 0x2F2F30)
     static let heatmapTooltipCost = NSColor(hex: 0x5FE58A)
     static let heatmapTooltipTokens = NSColor(hex: 0x72A9FF)
+    static let chartGrid = dynamic(light: 0xD8DADD, dark: 0x3A3D42, lightAlpha: 0.78, darkAlpha: 0.78)
+    static let chartGPT55 = dynamic(light: 0x4BD181, dark: 0x57D98B)
+    static let chartGPT54 = dynamic(light: 0x2F76F6, dark: 0x5B91FF)
+    static let chartClaude = dynamic(light: 0x8F45E8, dark: 0xA66BFF)
+    static let chartGemini = dynamic(light: 0xFF8A4F, dark: 0xFF9A66)
+    static let chartOther = dynamic(light: 0xB6BBC3, dark: 0x737984)
 
     private static func dynamic(
         light: Int,
