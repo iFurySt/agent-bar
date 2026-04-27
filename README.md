@@ -7,7 +7,7 @@
 
 ---
 
-A tiny, sharp ~~Vibe Coding~~ usage recorder. Download it from [Releases](https://github.com/iFurySt/agent-bar/releases).
+A tiny, sharp ~~vibe coding~~ addiction tracker. Download it from [Releases](https://github.com/iFurySt/agent-bar/releases).
 
 ## Screenshots
 
