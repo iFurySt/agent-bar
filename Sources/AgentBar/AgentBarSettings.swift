@@ -100,7 +100,7 @@ final class AgentBarSettingsViewController: NSViewController {
     private let autoCollapseValueLabel = NSTextField(labelWithString: "")
     private let sidebar = SettingsSidebarView()
     private let contentScrollView = NSScrollView()
-    private let contentView = NSView()
+    private let contentView = SettingsBackgroundView(color: AgentBarSettingsPalette.contentBackground)
     private let titleLabel = NSTextField(labelWithString: "General")
     private let generalCard = SettingsCardView()
     private let accountsCard = SettingsCardView()
@@ -139,13 +139,11 @@ final class AgentBarSettingsViewController: NSViewController {
     }
 
     override func loadView() {
-        let rootView = NSView(frame: NSRect(x: 0, y: 0, width: 640, height: 420))
-        rootView.wantsLayer = true
-        rootView.layer?.backgroundColor = AgentBarSettingsPalette.contentBackground.cgColor
+        let rootView = SettingsBackgroundView(
+            frame: NSRect(x: 0, y: 0, width: 640, height: 420),
+            color: AgentBarSettingsPalette.contentBackground)
 
         let sidebarDivider = SeparatorView(color: AgentBarSettingsPalette.sidebarDivider)
-        contentView.wantsLayer = true
-        contentView.layer?.backgroundColor = AgentBarSettingsPalette.contentBackground.cgColor
         contentScrollView.drawsBackground = false
         contentScrollView.borderType = .noBorder
         contentScrollView.hasVerticalScroller = true
@@ -680,7 +678,7 @@ final class SettingsSidebarView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
-        layer?.backgroundColor = AgentBarSettingsPalette.sidebarBackground.cgColor
+        updateBackgroundColor()
 
         selectedButton.target = self
         selectedButton.action = #selector(generalPressed)
@@ -718,6 +716,16 @@ final class SettingsSidebarView: NSView {
         nil
     }
 
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateBackgroundColor()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        updateBackgroundColor()
+    }
+
     fileprivate func select(_ page: SettingsPage) {
         selectedButton.isSelected = page == .general
         accountsButton.isSelected = page == .accounts
@@ -739,6 +747,10 @@ final class SettingsSidebarView: NSView {
 
     @objc private func aboutPressed() {
         onAbout?()
+    }
+
+    private func updateBackgroundColor() {
+        layer?.backgroundColor = AgentBarSettingsPalette.sidebarBackground.resolvedCGColor(for: effectiveAppearance)
     }
 }
 
@@ -1065,10 +1077,10 @@ final class SettingsAccountsListView: NSView {
             NSColor.systemGreen.withAlphaComponent(0.12).setFill()
             NSColor.systemGreen.withAlphaComponent(0.26).setStroke()
         } else if isHovered {
-            NSColor.white.withAlphaComponent(0.88).setFill()
+            AgentBarSettingsPalette.controlHoverBackground.setFill()
             AgentBarSettingsPalette.selection.withAlphaComponent(0.58).setStroke()
         } else {
-            NSColor.white.withAlphaComponent(0.70).setFill()
+            AgentBarSettingsPalette.controlBackground.setFill()
             AgentBarSettingsPalette.cardBorder.setStroke()
         }
         path.fill()
@@ -1533,15 +1545,59 @@ final class SettingsCardView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
-        layer?.backgroundColor = AgentBarSettingsPalette.cardBackground.cgColor
         layer?.cornerRadius = 7
         layer?.borderWidth = 0.5
-        layer?.borderColor = AgentBarSettingsPalette.cardBorder.cgColor
+        updateLayerColors()
     }
 
     @available(*, unavailable)
     required init?(coder _: NSCoder) {
         nil
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateLayerColors()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        updateLayerColors()
+    }
+
+    private func updateLayerColors() {
+        layer?.backgroundColor = AgentBarSettingsPalette.cardBackground.resolvedCGColor(for: effectiveAppearance)
+        layer?.borderColor = AgentBarSettingsPalette.cardBorder.resolvedCGColor(for: effectiveAppearance)
+    }
+}
+
+final class SettingsBackgroundView: NSView {
+    private let color: NSColor
+
+    init(frame frameRect: NSRect = .zero, color: NSColor) {
+        self.color = color
+        super.init(frame: frameRect)
+        wantsLayer = true
+        updateBackgroundColor()
+    }
+
+    @available(*, unavailable)
+    required init?(coder _: NSCoder) {
+        nil
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateBackgroundColor()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        updateBackgroundColor()
+    }
+
+    private func updateBackgroundColor() {
+        layer?.backgroundColor = color.resolvedCGColor(for: effectiveAppearance)
     }
 }
 
@@ -1562,7 +1618,21 @@ final class SeparatorView: NSView {
 
     private func configure() {
         wantsLayer = true
-        layer?.backgroundColor = color.cgColor
+        updateLayerColor()
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateLayerColor()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        updateLayerColor()
+    }
+
+    private func updateLayerColor() {
+        layer?.backgroundColor = color.resolvedCGColor(for: effectiveAppearance)
     }
 
     @available(*, unavailable)
@@ -1651,23 +1721,39 @@ final class SettingsIconButton: NSButton {
 }
 
 enum AgentBarSettingsPalette {
-    static let sidebarBackground = NSColor(hex: 0xE6E5E3)
-    static let contentBackground = NSColor(hex: 0xF3F1EF)
-    static let cardBackground = NSColor(hex: 0xEFEDEB)
+    static let sidebarBackground = dynamic(light: 0xE6E5E3, dark: 0x252629)
+    static let contentBackground = dynamic(light: 0xF3F1EF, dark: 0x1F2023)
+    static let cardBackground = dynamic(light: 0xEFEDEB, dark: 0x2A2B2E)
     static let selection = NSColor(hex: 0x226CFF)
-    static let cardBorder = NSColor(hex: 0xE2E0DF)
-    static let separator = NSColor(hex: 0xE4E2E1)
-    static let sidebarDivider = NSColor(hex: 0xD6D5D3)
-    static let heatmapLabel = NSColor(hex: 0x5D6268)
-    static let heatmapEmpty = NSColor(hex: 0xE7E7E7)
-    static let heatmapLevel1 = NSColor(hex: 0xA9D6C9)
-    static let heatmapLevel2 = NSColor(hex: 0x78BDA9)
-    static let heatmapLevel3 = NSColor(hex: 0x4B9C82)
-    static let heatmapLevel4 = NSColor(hex: 0x177953)
-    static let heatmapHoverStroke = NSColor(hex: 0x7D858D)
+    static let cardBorder = dynamic(light: 0xE2E0DF, dark: 0x3A3B3F)
+    static let separator = dynamic(light: 0xE4E2E1, dark: 0x383A3D)
+    static let sidebarDivider = dynamic(light: 0xD6D5D3, dark: 0x343539)
+    static let controlBackground = dynamic(light: 0xFFFFFF, dark: 0x34363A, lightAlpha: 0.70, darkAlpha: 0.92)
+    static let controlHoverBackground = dynamic(light: 0xFFFFFF, dark: 0x3D4046, lightAlpha: 0.88, darkAlpha: 1)
+    static let heatmapLabel = dynamic(light: 0x5D6268, dark: 0xA7ADB4)
+    static let heatmapEmpty = dynamic(light: 0xE7E7E7, dark: 0x303236)
+    static let heatmapLevel1 = dynamic(light: 0xA9D6C9, dark: 0x285246)
+    static let heatmapLevel2 = dynamic(light: 0x78BDA9, dark: 0x34705F)
+    static let heatmapLevel3 = dynamic(light: 0x4B9C82, dark: 0x409178)
+    static let heatmapLevel4 = dynamic(light: 0x177953, dark: 0x59C79F)
+    static let heatmapHoverStroke = dynamic(light: 0x7D858D, dark: 0xC2CBD4)
     static let heatmapTooltipBackground = NSColor(hex: 0x2F2F30)
     static let heatmapTooltipCost = NSColor(hex: 0x5FE58A)
     static let heatmapTooltipTokens = NSColor(hex: 0x72A9FF)
+
+    private static func dynamic(
+        light: Int,
+        dark: Int,
+        lightAlpha: CGFloat = 1,
+        darkAlpha: CGFloat = 1)
+        -> NSColor
+    {
+        NSColor(name: nil) { appearance in
+            NSColor(
+                hex: appearance.isDarkMode ? dark : light,
+                alpha: appearance.isDarkMode ? darkAlpha : lightAlpha)
+        }
+    }
 }
 
 private extension NSColor {
@@ -1677,6 +1763,20 @@ private extension NSColor {
             green: CGFloat((hex >> 8) & 0xFF) / 255,
             blue: CGFloat(hex & 0xFF) / 255,
             alpha: alpha)
+    }
+
+    func resolvedCGColor(for appearance: NSAppearance) -> CGColor {
+        var resolvedColor = cgColor
+        appearance.performAsCurrentDrawingAppearance {
+            resolvedColor = self.cgColor
+        }
+        return resolvedColor
+    }
+}
+
+private extension NSAppearance {
+    var isDarkMode: Bool {
+        bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
     }
 }
 
