@@ -1183,9 +1183,12 @@ final class AccountBlocksView: NSView {
         case ordinary
         case notch
 
-        var columnCount: Int {
+        func columnCount(for visibleAccountCount: Int) -> Int {
             switch self {
             case .ordinary:
+                if visibleAccountCount <= 1 {
+                    return 1
+                }
                 return 2
             case .notch:
                 return 1
@@ -1363,10 +1366,11 @@ final class AccountBlocksView: NSView {
 
     private func layoutFramesForOrderedAccounts(_ ordered: [CodexAccountUsageSnapshot]) -> [String: NSRect] {
         var frames: [String: NSRect] = [:]
-        let columns = max(1, presentation.columnCount)
+        let visible = visibleAccounts(ordered)
+        let columns = max(1, presentation.columnCount(for: visible.count))
         let columnWidth = max(0, (bounds.width - CGFloat(columns - 1) * Self.blockGap) / CGFloat(columns))
         var y = bounds.maxY - Self.blockHeight
-        for (index, account) in visibleAccounts(ordered).enumerated() {
+        for (index, account) in visible.enumerated() {
             let column = index % columns
             if index > 0, column == 0 {
                 y -= Self.blockHeight + Self.blockGap
@@ -1728,7 +1732,8 @@ final class AccountBlocksView: NSView {
 
     private var visibleRowCount: Int {
         let visibleCount = max(1, min(accounts.count, visibleAccountLimit))
-        return Int(ceil(Double(visibleCount) / Double(max(1, presentation.columnCount))))
+        let columns = max(1, presentation.columnCount(for: visibleCount))
+        return Int(ceil(Double(visibleCount) / Double(columns)))
     }
 
     private struct TitleLayout {
