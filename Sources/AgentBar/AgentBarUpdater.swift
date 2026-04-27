@@ -14,9 +14,9 @@ final class AgentBarUpdater: NSObject, SPUUpdaterDelegate {
         do {
             try updater.start()
             updater.clearFeedURLFromUserDefaults()
-            if updater.automaticallyChecksForUpdates {
-                updater.checkForUpdatesInBackground()
-            }
+            updater.automaticallyChecksForUpdates = true
+            syncAutomaticUpdateMode()
+            updater.checkForUpdatesInBackground()
         } catch {
             NSLog("AgentBar updater failed to start: \(error.localizedDescription)")
         }
@@ -24,10 +24,12 @@ final class AgentBarUpdater: NSObject, SPUUpdaterDelegate {
 
     var automaticallyChecksForUpdates: Bool {
         get {
-            updater.automaticallyChecksForUpdates
+            updater.automaticallyDownloadsUpdates
         }
         set {
-            updater.automaticallyChecksForUpdates = newValue
+            updater.automaticallyChecksForUpdates = true
+            updater.automaticallyDownloadsUpdates = newValue
+            syncAutomaticUpdateMode()
             if newValue {
                 updater.checkForUpdatesInBackground()
             }
@@ -52,6 +54,16 @@ final class AgentBarUpdater: NSObject, SPUUpdaterDelegate {
     func updater(_: SPUUpdater, shouldDownloadReleaseNotesForUpdate _: SUAppcastItem) -> Bool {
         false
     }
+
+    private func syncAutomaticUpdateMode() {
+        userDriver.automaticallyInstallsUpdates = updater.automaticallyDownloadsUpdates
+        userDriver.enableAutomaticUpdates = { [weak self] in
+            guard let self else { return }
+            updater.automaticallyChecksForUpdates = true
+            updater.automaticallyDownloadsUpdates = true
+            syncAutomaticUpdateMode()
+        }
+    }
 }
 
 @MainActor
@@ -63,6 +75,8 @@ final class AgentBarUpdateUserDriver: NSObject, SPUUserDriver {
     private var currentUpdate: SUAppcastItem?
     private var expectedContentLength: UInt64 = 0
     private var receivedContentLength: UInt64 = 0
+    var automaticallyInstallsUpdates = false
+    var enableAutomaticUpdates: (() -> Void)?
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -75,7 +89,7 @@ final class AgentBarUpdateUserDriver: NSObject, SPUUserDriver {
     func show(_: SPUUpdatePermissionRequest) async -> SUUpdatePermissionResponse {
         SUUpdatePermissionResponse(
             automaticUpdateChecks: true,
-            automaticUpdateDownloading: NSNumber(value: false),
+            automaticUpdateDownloading: NSNumber(value: automaticallyInstallsUpdates),
             sendSystemProfile: false)
     }
 
@@ -92,6 +106,10 @@ final class AgentBarUpdateUserDriver: NSObject, SPUUserDriver {
             }
             rememberSkippedVersion(appcastItem)
             return .skip
+        }
+
+        if automaticallyInstallsUpdates {
+            return .install
         }
 
         if state.stage == .downloaded || state.stage == .installing {
@@ -133,7 +151,11 @@ final class AgentBarUpdateUserDriver: NSObject, SPUUserDriver {
     func showExtractionReceivedProgress(_: Double) {}
 
     func showReadyToInstallAndRelaunch() async -> SPUUserUpdateChoice {
-        await confirmReadyToInstall()
+        if automaticallyInstallsUpdates {
+            return .install
+        }
+
+        return await confirmReadyToInstall()
     }
 
     func showInstallingUpdate(withApplicationTerminated _: Bool, retryTerminatingApplication _: @escaping () -> Void) {}
@@ -162,13 +184,19 @@ final class AgentBarUpdateUserDriver: NSObject, SPUUserDriver {
         .compactMap { $0 }
         .joined(separator: "\n\n")
 
-        let shouldInstall = await showAlert(
+        let response = await showAlert(
             title: "Install AgentBar \(currentUpdate.displayVersionString)?",
             message: message,
             primaryButton: "Install and Relaunch",
-            secondaryButton: "Skip This Version")
+            secondaryButton: "Skip This Version",
+            tertiaryButton: "Turn On Automatic Updates")
 
-        if shouldInstall {
+        if response == .alertFirstButtonReturn {
+            return .install
+        }
+
+        if response == .alertThirdButtonReturn {
+            enableAutomaticUpdates?()
             return .install
         }
 
@@ -180,8 +208,9 @@ final class AgentBarUpdateUserDriver: NSObject, SPUUserDriver {
         title: String,
         message: String,
         primaryButton: String,
-        secondaryButton: String?
-    ) async -> Bool {
+        secondaryButton: String?,
+        tertiaryButton: String? = nil
+    ) async -> NSApplication.ModalResponse {
         NSApp.activate(ignoringOtherApps: true)
 
         let alert = NSAlert()
@@ -192,8 +221,11 @@ final class AgentBarUpdateUserDriver: NSObject, SPUUserDriver {
         if let secondaryButton {
             alert.addButton(withTitle: secondaryButton)
         }
+        if let tertiaryButton {
+            alert.addButton(withTitle: tertiaryButton)
+        }
 
-        return alert.runModal() == .alertFirstButtonReturn
+        return alert.runModal()
     }
 
     private func rememberSkippedVersion(_ item: SUAppcastItem) {
