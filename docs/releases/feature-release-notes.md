@@ -4,6 +4,7 @@
 
 | 日期 | 功能域 | 用户价值 | 变更摘要 |
 | --- | --- | --- | --- |
+| 2026-04-27 | 设置窗口 | gear 打开的 General、Accounts、Usage 和 About 页面保持干净的无滚动条外观，滚动时也不会露出系统 scroller。 | 设置窗口主内容滚动视图和 Usage 热力图横向滚动视图保留滚动手势，但不创建可见 scroller。 |
 | 2026-04-27 | 设置窗口 | 打开 gear 设置窗口时会自动适配系统 Light/Dark 模式，不再在 Dark 模式下出现浅色背景上的白色文字。 | 将 Settings palette 改成基于 `NSAppearance` 的动态颜色，并让 layer-backed 背景、卡片、分隔线和 Usage heatmap 辅助色在 appearance 变化时刷新。 |
 | 2026-04-27 | 自动更新 | 开启 `Automatic Updates` 后升级流程不再每次打断确认；未开启时仍会提示，并能在提示框里改为以后自动更新；升级完成后会收到一次从旧版本到新版本的系统通知。 | 设置开关改为控制 Sparkle 自动下载/安装模式，更新检查保持开启；自动模式下载解包完成后直接重启安装，手动模式确认框新增 `Turn On Automatic Updates`；安装前记录版本，重启后发送一次完成通知。 |
 | 2026-04-27 | 设置窗口 | Accounts 页的 5h/7d quota 更容易横向比较，账号邮箱和剩余额度不再挤在同一行里。 | Settings Accounts 账号行改为邮箱下方两条 5h/7d quota bar，并保留右侧 `Switch`/`Current` 控件；账号行高度随内容增加。 |

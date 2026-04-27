@@ -144,12 +144,7 @@ final class AgentBarSettingsViewController: NSViewController {
             color: AgentBarSettingsPalette.contentBackground)
 
         let sidebarDivider = SeparatorView(color: AgentBarSettingsPalette.sidebarDivider)
-        contentScrollView.drawsBackground = false
-        contentScrollView.borderType = .noBorder
-        contentScrollView.hasVerticalScroller = true
-        contentScrollView.hasHorizontalScroller = false
-        contentScrollView.autohidesScrollers = true
-        contentScrollView.scrollerStyle = .overlay
+        configureScrollView(contentScrollView, vertical: true, horizontal: false)
         contentScrollView.documentView = contentView
 
         titleLabel.font = .systemFont(ofSize: 14, weight: .semibold)
@@ -195,12 +190,7 @@ final class AgentBarSettingsViewController: NSViewController {
                 rect: usageHeatmapView.convert(rect, to: usageTooltipOverlayView),
                 entry: entry)
         }
-        usageHeatmapScrollView.drawsBackground = false
-        usageHeatmapScrollView.borderType = .noBorder
-        usageHeatmapScrollView.hasHorizontalScroller = true
-        usageHeatmapScrollView.hasVerticalScroller = false
-        usageHeatmapScrollView.autohidesScrollers = true
-        usageHeatmapScrollView.scrollerStyle = .overlay
+        configureScrollView(usageHeatmapScrollView, vertical: false, horizontal: true)
         usageHeatmapView.frame = NSRect(
             x: 0,
             y: 0,
@@ -357,6 +347,17 @@ final class AgentBarSettingsViewController: NSViewController {
         refreshControls()
         refreshAccounts()
         refreshUsage()
+    }
+
+    private func configureScrollView(_ scrollView: NSScrollView, vertical: Bool, horizontal: Bool) {
+        scrollView.drawsBackground = false
+        scrollView.borderType = .noBorder
+        scrollView.hasVerticalScroller = false
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = false
+        scrollView.scrollerStyle = .overlay
+        scrollView.verticalScrollElasticity = vertical ? .allowed : .none
+        scrollView.horizontalScrollElasticity = horizontal ? .allowed : .none
     }
 
     override func viewWillAppear() {
