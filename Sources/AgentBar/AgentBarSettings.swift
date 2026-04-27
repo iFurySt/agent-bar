@@ -99,13 +99,15 @@ final class AgentBarSettingsViewController: NSViewController {
     private let autoCollapseStepper = NSStepper()
     private let autoCollapseValueLabel = NSTextField(labelWithString: "")
     private let sidebar = SettingsSidebarView()
+    private let contentScrollView = NSScrollView()
+    private let contentView = NSView()
     private let titleLabel = NSTextField(labelWithString: "General")
     private let generalCard = SettingsCardView()
     private let accountsCard = SettingsCardView()
     private let accountsListView = SettingsAccountsListView()
     private let accountsSummaryLabel = NSTextField(labelWithString: "Saved Codex accounts")
     private var accountsListHeightConstraint: NSLayoutConstraint?
-    private var accountsScrollHeightConstraint: NSLayoutConstraint?
+    private var contentBottomConstraint: NSLayoutConstraint?
     private let usageCard = SettingsCardView()
     private let usageHeatmapScrollView = NSScrollView()
     private let usageHeatmapView = TokenUsageHeatmapView()
@@ -142,9 +144,15 @@ final class AgentBarSettingsViewController: NSViewController {
         rootView.layer?.backgroundColor = AgentBarSettingsPalette.contentBackground.cgColor
 
         let sidebarDivider = SeparatorView(color: AgentBarSettingsPalette.sidebarDivider)
-        let contentView = NSView()
         contentView.wantsLayer = true
         contentView.layer?.backgroundColor = AgentBarSettingsPalette.contentBackground.cgColor
+        contentScrollView.drawsBackground = false
+        contentScrollView.borderType = .noBorder
+        contentScrollView.hasVerticalScroller = true
+        contentScrollView.hasHorizontalScroller = false
+        contentScrollView.autohidesScrollers = true
+        contentScrollView.scrollerStyle = .overlay
+        contentScrollView.documentView = contentView
 
         titleLabel.font = .systemFont(ofSize: 14, weight: .semibold)
         titleLabel.textColor = .labelColor
@@ -176,20 +184,8 @@ final class AgentBarSettingsViewController: NSViewController {
         accountsListView.onAccountSelected = { [weak self] accountID in
             self?.switchAccount(accountID)
         }
-        let accountsScrollView = NSScrollView()
-        accountsScrollView.drawsBackground = false
-        accountsScrollView.hasVerticalScroller = true
-        accountsScrollView.autohidesScrollers = true
         accountsListView.translatesAutoresizingMaskIntoConstraints = false
-        accountsScrollView.documentView = accountsListView
-        accountsScrollView.translatesAutoresizingMaskIntoConstraints = false
-
-        let accountsStack = NSStackView(views: [accountsScrollView])
-        accountsStack.orientation = .vertical
-        accountsStack.alignment = .leading
-        accountsStack.spacing = 0
-        accountsStack.translatesAutoresizingMaskIntoConstraints = false
-        accountsCard.addSubview(accountsStack)
+        accountsCard.addSubview(accountsListView)
 
         usageHeaderContainer = usageHeader
         usageHeatmapView.onHoverChanged = { [weak self] rect, entry in
@@ -224,7 +220,7 @@ final class AgentBarSettingsViewController: NSViewController {
 
         rootView.addSubview(sidebar)
         rootView.addSubview(sidebarDivider)
-        rootView.addSubview(contentView)
+        rootView.addSubview(contentScrollView)
         contentView.addSubview(titleLabel)
         contentView.addSubview(generalCard)
         contentView.addSubview(accountsHeader)
@@ -237,6 +233,7 @@ final class AgentBarSettingsViewController: NSViewController {
         for view in [
             sidebar,
             sidebarDivider,
+            contentScrollView,
             contentView,
             titleLabel,
             generalCard,
@@ -262,10 +259,16 @@ final class AgentBarSettingsViewController: NSViewController {
             sidebarDivider.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
             sidebarDivider.widthAnchor.constraint(equalToConstant: 1),
 
-            contentView.leadingAnchor.constraint(equalTo: sidebarDivider.trailingAnchor),
-            contentView.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
-            contentView.topAnchor.constraint(equalTo: rootView.topAnchor),
-            contentView.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
+            contentScrollView.leadingAnchor.constraint(equalTo: sidebarDivider.trailingAnchor),
+            contentScrollView.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
+            contentScrollView.topAnchor.constraint(equalTo: rootView.topAnchor),
+            contentScrollView.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
+
+            contentView.leadingAnchor.constraint(equalTo: contentScrollView.contentView.leadingAnchor),
+            contentView.trailingAnchor.constraint(equalTo: contentScrollView.contentView.trailingAnchor),
+            contentView.topAnchor.constraint(equalTo: contentScrollView.contentView.topAnchor),
+            contentView.widthAnchor.constraint(equalTo: contentScrollView.contentView.widthAnchor),
+            contentView.heightAnchor.constraint(greaterThanOrEqualTo: contentScrollView.contentView.heightAnchor),
 
             titleLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 8),
             titleLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 18),
@@ -299,12 +302,10 @@ final class AgentBarSettingsViewController: NSViewController {
             cardStack.topAnchor.constraint(equalTo: generalCard.topAnchor),
             cardStack.bottomAnchor.constraint(equalTo: generalCard.bottomAnchor),
 
-            accountsStack.leadingAnchor.constraint(equalTo: accountsCard.leadingAnchor),
-            accountsStack.trailingAnchor.constraint(equalTo: accountsCard.trailingAnchor),
-            accountsStack.topAnchor.constraint(equalTo: accountsCard.topAnchor),
-            accountsStack.bottomAnchor.constraint(equalTo: accountsCard.bottomAnchor),
-            accountsScrollView.widthAnchor.constraint(equalTo: accountsStack.widthAnchor),
-            accountsListView.widthAnchor.constraint(equalTo: accountsScrollView.contentView.widthAnchor),
+            accountsListView.leadingAnchor.constraint(equalTo: accountsCard.leadingAnchor),
+            accountsListView.trailingAnchor.constraint(equalTo: accountsCard.trailingAnchor),
+            accountsListView.topAnchor.constraint(equalTo: accountsCard.topAnchor),
+            accountsListView.bottomAnchor.constraint(equalTo: accountsCard.bottomAnchor),
 
             aboutStack.leadingAnchor.constraint(equalTo: aboutCard.leadingAnchor),
             aboutStack.trailingAnchor.constraint(equalTo: aboutCard.trailingAnchor),
@@ -338,8 +339,7 @@ final class AgentBarSettingsViewController: NSViewController {
         ])
         accountsListHeightConstraint = accountsListView.heightAnchor.constraint(equalToConstant: accountsListView.preferredHeight)
         accountsListHeightConstraint?.isActive = true
-        accountsScrollHeightConstraint = accountsScrollView.heightAnchor.constraint(equalToConstant: accountsListView.preferredHeight)
-        accountsScrollHeightConstraint?.isActive = true
+        updateContentBottomConstraint(for: selectedPage)
 
         sidebar.onGeneral = { [weak self] in
             self?.showPage(.general)
@@ -552,9 +552,9 @@ final class AgentBarSettingsViewController: NSViewController {
     private func applyAccounts(_ accounts: [CodexAccountUsageSnapshot]) {
         accountsListView.accounts = accounts
         accountsListHeightConstraint?.constant = accountsListView.preferredHeight
-        accountsScrollHeightConstraint?.constant = min(accountsListView.preferredHeight, 280)
         let count = accounts.count
         accountsSummaryLabel.stringValue = count == 1 ? "1 account" : "\(count) accounts"
+        updateContentBottomConstraint(for: selectedPage)
     }
 
     private func applyUsage(_ snapshot: CodexDailyTokenUsageSnapshot, yearRange: ClosedRange<Int>, year: Int) {
@@ -619,6 +619,26 @@ final class AgentBarSettingsViewController: NSViewController {
         usageTooltipOverlayView.isHidden = page != .usage
         aboutCard.isHidden = page != .about
         sidebar.select(page)
+        updateContentBottomConstraint(for: page)
+    }
+
+    private func updateContentBottomConstraint(for page: SettingsPage) {
+        contentBottomConstraint?.isActive = false
+        let targetView: NSView
+        switch page {
+        case .general:
+            targetView = generalCard
+        case .accounts:
+            targetView = accountsCard
+        case .usage:
+            targetView = usageCard
+        case .about:
+            targetView = aboutCard
+        }
+        let constraint = contentView.bottomAnchor.constraint(greaterThanOrEqualTo: targetView.bottomAnchor, constant: 18)
+        constraint.priority = .defaultHigh
+        constraint.isActive = true
+        contentBottomConstraint = constraint
     }
 
     private static func formatTokens(_ tokens: Int) -> String {
@@ -800,6 +820,8 @@ final class SettingsAccountsListView: NSView {
         }
     }
     var onAccountSelected: ((String) -> Void)?
+    private var trackingArea: NSTrackingArea?
+    private var hoveredSwitchAccountID: String?
 
     var preferredHeight: CGFloat {
         guard !accounts.isEmpty else { return 112 }
@@ -843,10 +865,39 @@ final class SettingsAccountsListView: NSView {
         onAccountSelected?(account.id)
     }
 
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea {
+            removeTrackingArea(trackingArea)
+        }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.activeAlways, .inVisibleRect, .mouseEnteredAndExited, .mouseMoved],
+            owner: self)
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        let accountID = switchableAccount(at: point)?.id
+        updateHoveredSwitchAccount(accountID)
+        if accountID != nil {
+            NSCursor.pointingHand.set()
+        } else {
+            NSCursor.arrow.set()
+        }
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        updateHoveredSwitchAccount(nil)
+        NSCursor.arrow.set()
+    }
+
     override func resetCursorRects() {
         super.resetCursorRects()
         for (index, account) in orderedAccounts().enumerated() where !account.isCurrent {
-            addCursorRect(switchRect(in: rowRect(at: index)), cursor: .pointingHand)
+            addCursorRect(switchRect(for: account, in: rowRect(at: index)), cursor: .pointingHand)
         }
     }
 
@@ -854,11 +905,23 @@ final class SettingsAccountsListView: NSView {
         let ordered = orderedAccounts()
         guard point.y >= 0 else { return nil }
         for index in ordered.indices {
-            if switchRect(in: rowRect(at: index)).contains(point) {
-                return ordered[index]
+            let account = ordered[index]
+            if switchRect(for: account, in: rowRect(at: index)).contains(point) {
+                return account
             }
         }
         return nil
+    }
+
+    private func switchableAccount(at point: NSPoint) -> CodexAccountUsageSnapshot? {
+        guard let account = account(at: point), !account.isCurrent else { return nil }
+        return account
+    }
+
+    private func updateHoveredSwitchAccount(_ accountID: String?) {
+        guard hoveredSwitchAccountID != accountID else { return }
+        hoveredSwitchAccountID = accountID
+        needsDisplay = true
     }
 
     private func orderedAccounts() -> [CodexAccountUsageSnapshot] {
@@ -883,22 +946,19 @@ final class SettingsAccountsListView: NSView {
     }
 
     private func drawRow(_ account: CodexAccountUsageSnapshot, in rect: NSRect) {
-        let switchRect = switchRect(in: rect)
-        let contentMaxX = switchRect.minX - 16
+        let layout = titleLayout(account.label, plan: account.plan, in: rect)
         let title = attributedTitle(account.label)
-        let titleWidth = min(ceil(title.size().width), max(60, contentMaxX - rect.minX - 20))
-        let titleRect = NSRect(x: rect.minX + 20, y: rect.minY + 12, width: titleWidth, height: 14)
-        title.draw(in: titleRect)
+        title.draw(in: layout.titleRect)
 
-        if let plan = account.plan {
-            let chipSize = chipSize(for: plan)
-            let chipX = min(titleRect.maxX + 7, contentMaxX - chipSize.width)
-            if chipX > titleRect.minX {
-                drawChip(plan, in: NSRect(x: chipX, y: rect.minY + 11, width: chipSize.width, height: chipSize.height))
-            }
+        if let plan = account.plan, let chipRect = layout.chipRect {
+            drawChip(plan, in: chipRect)
         }
+        drawSwitchButton(
+            isCurrent: account.isCurrent,
+            isHovered: hoveredSwitchAccountID == account.id,
+            in: layout.switchRect)
 
-        let metricWidth = max(0, contentMaxX - rect.minX - 20)
+        let metricWidth = max(0, rect.width - 40)
         drawMetric(
             title: "5h",
             percent: account.rateLimits.fiveHourRemainingPercent,
@@ -909,11 +969,45 @@ final class SettingsAccountsListView: NSView {
             percent: account.rateLimits.weeklyRemainingPercent,
             resetAt: account.rateLimits.weeklyResetAt,
             in: NSRect(x: rect.minX + 20, y: rect.minY + 49, width: metricWidth, height: 12))
-        drawSwitchButton(isCurrent: account.isCurrent, in: switchRect)
     }
 
-    private func switchRect(in rect: NSRect) -> NSRect {
-        NSRect(x: rect.maxX - 78, y: rect.minY + 13, width: Self.switchButtonWidth, height: Self.switchButtonHeight)
+    private func switchRect(for account: CodexAccountUsageSnapshot, in rect: NSRect) -> NSRect {
+        titleLayout(account.label, plan: account.plan, in: rect).switchRect
+    }
+
+    private func titleLayout(_ title: String, plan: String?, in rect: NSRect) -> TitleLayout {
+        let title = attributedTitle(title)
+        let resolvedChipSize = plan.map { chipSize(for: $0) } ?? NSSize.zero
+        let chipGap: CGFloat = plan == nil ? 0 : 7
+        let switchGap: CGFloat = 6
+        let rightLimit = rect.maxX - 20
+        let reservedWidth = resolvedChipSize.width + chipGap + switchGap + Self.switchButtonWidth
+        let titleWidth = min(
+            ceil(title.size().width),
+            max(60, rightLimit - rect.minX - 20 - reservedWidth))
+        let titleRect = NSRect(x: rect.minX + 20, y: rect.minY + 12, width: titleWidth, height: 14)
+
+        let chipRect: NSRect?
+        let switchX: CGFloat
+        if plan != nil {
+            let rect = NSRect(
+                x: titleRect.maxX + chipGap,
+                y: rect.minY + 11,
+                width: resolvedChipSize.width,
+                height: resolvedChipSize.height)
+            chipRect = rect
+            switchX = rect.maxX + switchGap
+        } else {
+            chipRect = nil
+            switchX = titleRect.maxX + switchGap
+        }
+
+        let switchRect = NSRect(
+            x: min(switchX, rightLimit - Self.switchButtonWidth),
+            y: rect.minY + 11,
+            width: Self.switchButtonWidth,
+            height: Self.switchButtonHeight)
+        return TitleLayout(titleRect: titleRect, chipRect: chipRect, switchRect: switchRect)
     }
 
     private func attributedTitle(_ value: String) -> NSAttributedString {
@@ -965,25 +1059,50 @@ final class SettingsAccountsListView: NSView {
         fill.fill()
     }
 
-    private func drawSwitchButton(isCurrent: Bool, in rect: NSRect) {
+    private func drawSwitchButton(isCurrent: Bool, isHovered: Bool, in rect: NSRect) {
         let path = NSBezierPath(roundedRect: rect, xRadius: rect.height / 2, yRadius: rect.height / 2)
         if isCurrent {
-            NSColor.systemGreen.withAlphaComponent(0.14).setFill()
-            NSColor.systemGreen.withAlphaComponent(0.28).setStroke()
+            NSColor.systemGreen.withAlphaComponent(0.12).setFill()
+            NSColor.systemGreen.withAlphaComponent(0.26).setStroke()
+        } else if isHovered {
+            NSColor.white.withAlphaComponent(0.88).setFill()
+            AgentBarSettingsPalette.selection.withAlphaComponent(0.58).setStroke()
         } else {
-            NSColor.white.withAlphaComponent(0.62).setFill()
+            NSColor.white.withAlphaComponent(0.70).setFill()
             AgentBarSettingsPalette.cardBorder.setStroke()
         }
         path.fill()
         path.lineWidth = 0.8
         path.stroke()
 
-        let title = isCurrent ? "Current" : "Switch"
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 10.4, weight: .semibold),
-            .foregroundColor: isCurrent ? NSColor.systemGreen : AgentBarSettingsPalette.selection,
-        ]
-        let attributed = NSAttributedString(string: title, attributes: attributes)
+        let symbolName = isCurrent ? "checkmark" : "arrow.left.arrow.right"
+        let symbolColor = isCurrent ? NSColor.systemGreen : AgentBarSettingsPalette.selection.withAlphaComponent(isHovered ? 1 : 0.82)
+        drawSymbol(symbolName, color: symbolColor, in: rect.insetBy(dx: 5.6, dy: 3))
+    }
+
+    private func drawSymbol(_ symbolName: String, color: NSColor, in rect: NSRect) {
+        let symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 8.5, weight: .semibold)
+            .applying(NSImage.SymbolConfiguration(hierarchicalColor: color))
+        if let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)?
+            .withSymbolConfiguration(symbolConfiguration)
+        {
+            image.draw(
+                in: rect,
+                from: .zero,
+                operation: .sourceOver,
+                fraction: 1,
+                respectFlipped: true,
+                hints: nil)
+            return
+        }
+
+        let fallback = symbolName == "checkmark" ? "OK" : "><"
+        let attributed = NSAttributedString(
+            string: fallback,
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 7, weight: .bold),
+                .foregroundColor: color,
+            ])
         let size = attributed.size()
         attributed.draw(at: NSPoint(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2))
     }
@@ -1043,8 +1162,14 @@ final class SettingsAccountsListView: NSView {
     }
 
     private static let rowHeight: CGFloat = 72
-    private static let switchButtonWidth: CGFloat = 58
-    private static let switchButtonHeight: CGFloat = 22
+    private static let switchButtonWidth: CGFloat = 24
+    private static let switchButtonHeight: CGFloat = 15
+
+    private struct TitleLayout {
+        let titleRect: NSRect
+        let chipRect: NSRect?
+        let switchRect: NSRect
+    }
 }
 
 final class SettingsLinkRowView: NSControl {
