@@ -13,6 +13,8 @@ enum SettingsPage {
 final class AgentBarSettingsWindowController: NSWindowController, NSWindowDelegate {
     var onClose: (() -> Void)?
     private let settingsViewController: AgentBarSettingsViewController
+    private static let defaultWindowSize = NSSize(width: 640, height: 420)
+    private static let minimumWindowSize = NSSize(width: 560, height: 380)
 
     init(
         updater: AgentBarUpdater,
@@ -27,7 +29,7 @@ final class AgentBarSettingsWindowController: NSWindowController, NSWindowDelega
         contentViewController.onAccountSwitch = onAccountSwitch
         settingsViewController = contentViewController
         let window = AgentBarSettingsWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 760, height: 420),
+            contentRect: NSRect(origin: .zero, size: Self.defaultWindowSize),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false)
@@ -37,7 +39,7 @@ final class AgentBarSettingsWindowController: NSWindowController, NSWindowDelega
         window.isReleasedWhenClosed = false
         window.collectionBehavior = [.moveToActiveSpace]
         window.contentViewController = contentViewController
-        window.minSize = NSSize(width: 720, height: 380)
+        window.minSize = Self.minimumWindowSize
 
         super.init(window: window)
         window.delegate = self
@@ -105,6 +107,7 @@ final class AgentBarSettingsViewController: NSViewController {
     private var accountsListHeightConstraint: NSLayoutConstraint?
     private var accountsScrollHeightConstraint: NSLayoutConstraint?
     private let usageCard = SettingsCardView()
+    private let usageHeatmapScrollView = NSScrollView()
     private let usageHeatmapView = TokenUsageHeatmapView()
     private let usageTooltipOverlayView = UsageTooltipOverlayView()
     private let usageSummaryLabel = NSTextField(labelWithString: "Scanning local Codex sessions...")
@@ -134,7 +137,7 @@ final class AgentBarSettingsViewController: NSViewController {
     }
 
     override func loadView() {
-        let rootView = NSView(frame: NSRect(x: 0, y: 0, width: 760, height: 420))
+        let rootView = NSView(frame: NSRect(x: 0, y: 0, width: 640, height: 420))
         rootView.wantsLayer = true
         rootView.layer?.backgroundColor = AgentBarSettingsPalette.contentBackground.cgColor
 
@@ -198,12 +201,19 @@ final class AgentBarSettingsViewController: NSViewController {
                 rect: usageHeatmapView.convert(rect, to: usageTooltipOverlayView),
                 entry: entry)
         }
-        let usageStack = NSStackView(views: [usageHeatmapView])
-        usageStack.orientation = .vertical
-        usageStack.alignment = .leading
-        usageStack.spacing = 0
-        usageStack.translatesAutoresizingMaskIntoConstraints = false
-        usageCard.addSubview(usageStack)
+        usageHeatmapScrollView.drawsBackground = false
+        usageHeatmapScrollView.borderType = .noBorder
+        usageHeatmapScrollView.hasHorizontalScroller = true
+        usageHeatmapScrollView.hasVerticalScroller = false
+        usageHeatmapScrollView.autohidesScrollers = true
+        usageHeatmapScrollView.scrollerStyle = .overlay
+        usageHeatmapView.frame = NSRect(
+            x: 0,
+            y: 0,
+            width: TokenUsageHeatmapView.contentWidth,
+            height: TokenUsageHeatmapView.contentHeight)
+        usageHeatmapScrollView.documentView = usageHeatmapView
+        usageCard.addSubview(usageHeatmapScrollView)
 
         let aboutStack = NSStackView(views: [githubRow])
         aboutStack.orientation = .vertical
@@ -234,6 +244,7 @@ final class AgentBarSettingsViewController: NSViewController {
             accountsCard,
             usageHeader,
             usageCard,
+            usageHeatmapScrollView,
             aboutCard,
             usageTooltipOverlayView,
         ] {
@@ -311,12 +322,11 @@ final class AgentBarSettingsViewController: NSViewController {
             separator.heightAnchor.constraint(equalToConstant: 0.5),
             separator2.heightAnchor.constraint(equalToConstant: 0.5),
 
-            usageStack.leadingAnchor.constraint(equalTo: usageCard.leadingAnchor, constant: 16),
-            usageStack.trailingAnchor.constraint(equalTo: usageCard.trailingAnchor, constant: -16),
-            usageStack.topAnchor.constraint(equalTo: usageCard.topAnchor, constant: 16),
-            usageStack.bottomAnchor.constraint(equalTo: usageCard.bottomAnchor, constant: -16),
-            usageHeatmapView.widthAnchor.constraint(lessThanOrEqualTo: usageStack.widthAnchor),
-            usageHeatmapView.heightAnchor.constraint(equalToConstant: TokenUsageHeatmapView.contentHeight),
+            usageHeatmapScrollView.leadingAnchor.constraint(equalTo: usageCard.leadingAnchor, constant: 16),
+            usageHeatmapScrollView.trailingAnchor.constraint(equalTo: usageCard.trailingAnchor, constant: -16),
+            usageHeatmapScrollView.topAnchor.constraint(equalTo: usageCard.topAnchor, constant: 16),
+            usageHeatmapScrollView.bottomAnchor.constraint(equalTo: usageCard.bottomAnchor, constant: -16),
+            usageHeatmapScrollView.heightAnchor.constraint(equalToConstant: TokenUsageHeatmapView.contentHeight),
 
             githubRow.widthAnchor.constraint(equalTo: aboutStack.widthAnchor),
             githubRow.heightAnchor.constraint(equalToConstant: 48),
@@ -1038,7 +1048,13 @@ final class SettingsLinkRowView: NSControl {
 }
 
 final class TokenUsageHeatmapView: NSView {
+    private static let cellSize: CGFloat = 11
+    private static let cellGap: CGFloat = 4
+    private static let leftLabelWidth: CGFloat = 36
+    private static let monthLabelHeight: CGFloat = 24
+    private static let weekCount: CGFloat = 54
     static let contentHeight: CGFloat = 142
+    static let contentWidth: CGFloat = leftLabelWidth + weekCount * (cellSize + cellGap)
 
     var snapshot = CodexDailyTokenUsageSnapshot(days: []) {
         didSet {
@@ -1049,10 +1065,6 @@ final class TokenUsageHeatmapView: NSView {
     }
     var onHoverChanged: ((NSRect?, CodexDailyTokenUsage?) -> Void)?
 
-    private let cellSize: CGFloat = 11
-    private let cellGap: CGFloat = 4
-    private let leftLabelWidth: CGFloat = 36
-    private let monthLabelHeight: CGFloat = 24
     private static let tooltipVerticalPadding: CGFloat = 14
     private static let tooltipHorizontalPadding: CGFloat = 14
     private var cellRects: [(rect: NSRect, entry: CodexDailyTokenUsage)] = []
@@ -1077,7 +1089,7 @@ final class TokenUsageHeatmapView: NSView {
     }
 
     override var intrinsicContentSize: NSSize {
-        NSSize(width: leftLabelWidth + 54 * (cellSize + cellGap), height: Self.contentHeight)
+        NSSize(width: Self.contentWidth, height: Self.contentHeight)
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -1150,10 +1162,10 @@ final class TokenUsageHeatmapView: NSView {
         guard let first = entries.first else { return [] }
         let calendar = Calendar.current
         let weekday = calendar.component(.weekday, from: first.day) - 1
-        let pitch = cellSize + cellGap
-        let totalWidth = CGFloat(54) * pitch - cellGap
-        let originX = leftLabelWidth + max(0, (bounds.width - leftLabelWidth - totalWidth) / 2)
-        let originY = max(0, bounds.height - monthLabelHeight - CGFloat(7) * pitch - 4)
+        let pitch = Self.cellSize + Self.cellGap
+        let totalWidth = Self.weekCount * pitch - Self.cellGap
+        let originX = Self.leftLabelWidth + max(0, (bounds.width - Self.leftLabelWidth - totalWidth) / 2)
+        let originY = max(0, bounds.height - Self.monthLabelHeight - CGFloat(7) * pitch - 4)
 
         return entries.enumerated().map { offset, entry in
             let absoluteDay = weekday + offset
@@ -1162,8 +1174,8 @@ final class TokenUsageHeatmapView: NSView {
             let rect = NSRect(
                 x: originX + CGFloat(week) * pitch,
                 y: originY + CGFloat(6 - day) * pitch,
-                width: cellSize,
-                height: cellSize)
+                width: Self.cellSize,
+                height: Self.cellSize)
             return (rect, entry)
         }
     }
@@ -1195,7 +1207,7 @@ final class TokenUsageHeatmapView: NSView {
 
     private func drawWeekdayLabels() {
         guard !cellRects.isEmpty else { return }
-        let pitch = cellSize + cellGap
+        let pitch = Self.cellSize + Self.cellGap
         let labels: [(String, Int)] = [("Mon", 1), ("Wed", 3), ("Fri", 5)]
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 12.8, weight: .regular),
@@ -1205,7 +1217,7 @@ final class TokenUsageHeatmapView: NSView {
         let topCellMaxY = cellRects.map { $0.rect.maxY }.max() ?? 0
 
         for (label, weekdayIndex) in labels {
-            let rowCenterY = topCellMaxY - CGFloat(weekdayIndex) * pitch - cellSize / 2
+            let rowCenterY = topCellMaxY - CGFloat(weekdayIndex) * pitch - Self.cellSize / 2
             let y = rowCenterY - labelHeight / 2
             label.draw(at: NSPoint(x: 0, y: y), withAttributes: attributes)
         }
