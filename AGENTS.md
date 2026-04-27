@@ -25,7 +25,7 @@
 - `docs/SECURITY.md`：认证、数据处理、外部集成等安全默认约束。
 - `docs/SUPPLY_CHAIN_SECURITY.md`：依赖、SBOM、制品 provenance 和仓库级供应链安全默认做法。
 - `docs/CICD.md`：仓库的 CI/CD 骨架、发版流程、tag 推送与 GitHub Actions 观察/修复约定；用户说“发版”前必须先读。
-- `docs/FRONTEND.md`：如果仓库包含前端界面，这里记录对应规范。
+- `docs/FRONTEND.md`：如果仓库包含前端界面，这里记录对应规范；所有 UI/UX 改动都要遵循 Apple 设计语言和 less is more 的简约美学。
 - `CONTRIBUTING.md`：提 PR 前后的默认检查项和协作要求。
 - `docs/releases/README.md`：如何维护面向用户的发布记录。
 - `docs/references/README.md`：沉淀到仓库里的外部参考资料。

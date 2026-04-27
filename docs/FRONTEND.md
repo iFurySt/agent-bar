@@ -4,6 +4,8 @@
 
 ## UI 约束
 
+- 所有 UI/UX 改动都要符合 Apple 的设计语言和设计哲学：尊重 macOS 原生控件、系统层级、空间节奏、动效克制和可访问性默认行为；优先使用熟悉、低打扰、直接服务任务的界面表达。
+- 视觉风格坚持 less is more。新增入口、状态、文案、装饰和动效前要先证明它确实减少认知负担；能用留白、对齐、层级、系统色和 SF Symbols 解决的，不引入额外装饰、复杂配色或营销化视觉。
 - 首屏就是顶部浮窗，不做 landing page、设置页或复杂菜单。
 - 浮窗只展示一行：`5h`、`7d`、Today cost/tokens、约 30 天 cost/tokens。
 - 所有屏幕都使用贴住顶部、水平居中的黑色 island，高度对齐各自屏幕当前系统菜单栏的视觉高度；全屏应用左上角绿色 Full Screen 后，系统顶栏 hover 下拉时也按实时 `Menubar` 高度归一化重算，不使用固定 24pt 近似值，也不把菜单栏窗口底部额外边缘算进黑色高度。普通屏幕显示完整信息且中间不留空区，文本分隔保持紧凑，`Tokens` 右侧 padding 和左侧 logo 前 padding 对称；无 notch 的普通屏幕未 pin 时自动收起，顶边悬停时按 0.26s ease-in-out 滑出，鼠标悬停到 island 后右侧 pin icon 和 gear icon 才随宽度动画显现；gear 打开轻量设置窗口，窗口使用紧凑 macOS preferences 风格：sidebar 背景 `#E6E5E3`，正文背景 `#F3F1EF`，grouped settings 卡片背景 `#EFEDEB`，`#226CFF` 选中态和原生开关，Accounts 作为独立页面展示所有已见 Codex 账号和切换按钮，Usage 作为独立页面展示类似 GitHub contribution calendar 的年度 token 热力图，header 中间提供年份左右切换，热力图顶部显示月份、左侧显示 Mon/Wed/Fri，hover 单元格时用自适应宽高的深色浮层展示缩写日期、美元消耗和 Tokens，年度热力图宽于默认设置窗口时只在卡片内部横向滚动，不应撑宽整个设置窗口，About 作为独立页面展示 GitHub 仓库入口；刘海屏绘制和 notch 等高的小型黑色 island，把物理 notch 作为中心禁区，不显示 `5h`/`7d` 文本标签，并在右侧保留 hover 显现的 gear icon（无 pin）。
