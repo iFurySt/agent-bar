@@ -884,27 +884,36 @@ final class SettingsAccountsListView: NSView {
 
     private func drawRow(_ account: CodexAccountUsageSnapshot, in rect: NSRect) {
         let switchRect = switchRect(in: rect)
-        let quotaRect = NSRect(x: switchRect.minX - 126, y: rect.midY - 7, width: 112, height: 14)
-        let titleMaxX = quotaRect.minX - 12
+        let contentMaxX = switchRect.minX - 16
         let title = attributedTitle(account.label)
-        let titleWidth = min(ceil(title.size().width), max(60, titleMaxX - rect.minX - 20))
-        let titleRect = NSRect(x: rect.minX + 20, y: rect.midY - 7, width: titleWidth, height: 14)
+        let titleWidth = min(ceil(title.size().width), max(60, contentMaxX - rect.minX - 20))
+        let titleRect = NSRect(x: rect.minX + 20, y: rect.minY + 12, width: titleWidth, height: 14)
         title.draw(in: titleRect)
 
         if let plan = account.plan {
             let chipSize = chipSize(for: plan)
-            let chipX = min(titleRect.maxX + 7, titleMaxX - chipSize.width)
+            let chipX = min(titleRect.maxX + 7, contentMaxX - chipSize.width)
             if chipX > titleRect.minX {
-                drawChip(plan, in: NSRect(x: chipX, y: rect.midY - chipSize.height / 2, width: chipSize.width, height: chipSize.height))
+                drawChip(plan, in: NSRect(x: chipX, y: rect.minY + 11, width: chipSize.width, height: chipSize.height))
             }
         }
 
-        drawRateLimits(account.rateLimits, in: quotaRect)
+        let metricWidth = max(0, contentMaxX - rect.minX - 20)
+        drawMetric(
+            title: "5h",
+            percent: account.rateLimits.fiveHourRemainingPercent,
+            resetAt: account.rateLimits.fiveHourResetAt,
+            in: NSRect(x: rect.minX + 20, y: rect.minY + 32, width: metricWidth, height: 12))
+        drawMetric(
+            title: "7d",
+            percent: account.rateLimits.weeklyRemainingPercent,
+            resetAt: account.rateLimits.weeklyResetAt,
+            in: NSRect(x: rect.minX + 20, y: rect.minY + 49, width: metricWidth, height: 12))
         drawSwitchButton(isCurrent: account.isCurrent, in: switchRect)
     }
 
     private func switchRect(in rect: NSRect) -> NSRect {
-        NSRect(x: rect.maxX - 78, y: rect.midY - Self.switchButtonHeight / 2, width: Self.switchButtonWidth, height: Self.switchButtonHeight)
+        NSRect(x: rect.maxX - 78, y: rect.minY + 13, width: Self.switchButtonWidth, height: Self.switchButtonHeight)
     }
 
     private func attributedTitle(_ value: String) -> NSAttributedString {
@@ -919,16 +928,41 @@ final class SettingsAccountsListView: NSView {
             ])
     }
 
-    private func drawRateLimits(_ rateLimits: CodexRateLimitSnapshot, in rect: NSRect) {
-        let fiveHour = rateLimits.fiveHourRemainingPercent.map { "\(min(100, max(0, $0)))%" } ?? "--%"
-        let weekly = rateLimits.weeklyRemainingPercent.map { "\(min(100, max(0, $0)))%" } ?? "--%"
-        let text = NSAttributedString(
-            string: "5h \(fiveHour)  7d \(weekly)",
+    private func drawMetric(title: String, percent: Int?, resetAt: Date?, in rect: NSRect) {
+        let percentText = percent.map { "\(min(100, max(0, $0)))%" } ?? "--%"
+        let resetText = resetAt.map { Self.countdown(to: $0) } ?? "--"
+        let label = NSAttributedString(
+            string: "\(title) \(percentText)",
             attributes: [
-                .font: NSFont.monospacedSystemFont(ofSize: 10.2, weight: .semibold),
+                .font: NSFont.monospacedSystemFont(ofSize: 9.7, weight: .semibold),
                 .foregroundColor: NSColor.secondaryLabelColor,
             ])
-        text.draw(in: rect)
+        let reset = NSAttributedString(
+            string: resetText,
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 8.8, weight: .medium),
+                .foregroundColor: NSColor.tertiaryLabelColor,
+            ])
+
+        label.draw(in: NSRect(x: rect.minX, y: rect.minY, width: 46, height: rect.height))
+        reset.draw(in: NSRect(x: rect.maxX - 54, y: rect.minY + 1, width: 54, height: rect.height))
+
+        let trackRect = NSRect(x: rect.minX + 51, y: rect.minY + 4, width: max(0, rect.width - 111), height: 5)
+        let track = NSBezierPath(roundedRect: trackRect, xRadius: 2.5, yRadius: 2.5)
+        AgentBarSettingsPalette.separator.withAlphaComponent(0.72).setFill()
+        track.fill()
+
+        guard let percent else { return }
+        let ratio = CGFloat(min(100, max(0, percent))) / 100
+        guard ratio > 0 else { return }
+        let fillRect = NSRect(
+            x: trackRect.minX,
+            y: trackRect.minY,
+            width: max(4, trackRect.width * ratio),
+            height: trackRect.height)
+        let fill = NSBezierPath(roundedRect: fillRect, xRadius: 2.5, yRadius: 2.5)
+        Self.percentColor(percent).withAlphaComponent(0.86).setFill()
+        fill.fill()
     }
 
     private func drawSwitchButton(isCurrent: Bool, in rect: NSRect) {
@@ -977,6 +1011,30 @@ final class SettingsAccountsListView: NSView {
         attributed.draw(at: NSPoint(x: rect.midX - textSize.width / 2, y: rect.midY - textSize.height / 2))
     }
 
+    private static func percentColor(_ percent: Int) -> NSColor {
+        if percent >= 60 {
+            return .systemGreen
+        }
+        if percent >= 20 {
+            return .systemOrange
+        }
+        return .systemRed
+    }
+
+    private static func countdown(to date: Date, now: Date = Date()) -> String {
+        let seconds = max(0, Int(date.timeIntervalSince(now)))
+        let days = seconds / 86_400
+        let hours = (seconds % 86_400) / 3_600
+        let minutes = (seconds % 3_600) / 60
+        if days > 0 {
+            return "\(days)d \(hours)h"
+        }
+        if hours > 0 {
+            return "\(hours)h \(minutes)m"
+        }
+        return "\(minutes)m"
+    }
+
     private func truncated(_ value: String, maxLength: Int) -> String {
         guard value.count > maxLength else { return value }
         let head = value.prefix(maxLength - 8)
@@ -984,7 +1042,7 @@ final class SettingsAccountsListView: NSView {
         return "\(head)...\(tail)"
     }
 
-    private static let rowHeight: CGFloat = 44
+    private static let rowHeight: CGFloat = 72
     private static let switchButtonWidth: CGFloat = 58
     private static let switchButtonHeight: CGFloat = 22
 }

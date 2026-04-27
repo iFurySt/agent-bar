@@ -4,6 +4,7 @@
 
 | 日期 | 功能域 | 用户价值 | 变更摘要 |
 | --- | --- | --- | --- |
+| 2026-04-27 | 设置窗口 | Accounts 页的 5h/7d quota 更容易横向比较，账号邮箱和剩余额度不再挤在同一行里。 | Settings Accounts 账号行改为邮箱下方两条 5h/7d quota bar，并保留右侧 `Switch`/`Current` 控件；账号行高度随内容增加。 |
 | 2026-04-27 | 多账号管理 | 无 notch 普通屏展开账号时能更充分利用横向空间，一屏看到更多账号 quota，减少进入 Settings 的次数。 | 普通屏账号展开区改为两列网格，最多展示 8 个账号；刘海屏继续保留单列 4 个账号，超过当前屏幕展示上限仍通过更多账号入口进入 Accounts 页面。 |
 | 2026-04-27 | 多账号管理 | 用户保存超过顶部浮窗展示上限的 Codex 账号后，后续账号不会静默消失，而是能明确进入完整账号列表查看和切换。 | island 展开区底部新增更多账号入口；设置窗口新增 Accounts 页面，集中展示所有已见账号、5h/7d quota、当前状态和切换按钮。 |
 | 2026-04-25 | 设置窗口 | 用户可以在 AgentBar 设置里按年份查看类似 GitHub contribution calendar 的 Codex token 使用热力图，快速识别每天的本地消耗强度，并悬停查看当天具体费用和 token。 | 新增 Usage 页面，读取 `~/.codex/sessions` 的 `token_count` 事件并按事件 timestamp 聚合到自然日；结果复用 `~/.agentbar/cache.json` 的 session 文件 size/mtime 缓存，跨天继续同一个 session 时会把新增 token 分到对应日期，并补捞最近修改过的旧日期目录 session 文件；热力图补齐年份切换、月份、Mon/Wed/Fri 标尺和深色 hover 浮层。 |
