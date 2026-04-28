@@ -2036,7 +2036,10 @@ final class AgentBarPreferences {
 
     var isPinned: Bool {
         get {
-            defaults.bool(forKey: pinnedKey)
+            guard defaults.object(forKey: pinnedKey) != nil else {
+                return true
+            }
+            return defaults.bool(forKey: pinnedKey)
         }
         set {
             defaults.set(newValue, forKey: pinnedKey)
