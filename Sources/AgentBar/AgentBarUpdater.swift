@@ -139,6 +139,22 @@ final class AgentBarUpdater: NSObject, SPUUpdaterDelegate {
         AgentBarUpdateCompletionNotifier.rememberPendingUpdate(to: item)
     }
 
+    func updater(
+        _: SPUUpdater,
+        willInstallUpdateOnQuit item: SUAppcastItem,
+        immediateInstallationBlock immediateInstallHandler: @escaping () -> Void
+    ) -> Bool {
+        guard updater.automaticallyDownloadsUpdates else {
+            return false
+        }
+
+        AgentBarUpdateCompletionNotifier.rememberPendingUpdate(to: item)
+        DispatchQueue.main.async {
+            immediateInstallHandler()
+        }
+        return true
+    }
+
     private func notifyStatusChanged() {
         onStatusChanged?(status)
     }
@@ -261,7 +277,18 @@ final class AgentBarUpdateUserDriver: NSObject, SPUUserDriver {
         return await confirmReadyToInstall()
     }
 
-    func showInstallingUpdate(withApplicationTerminated _: Bool, retryTerminatingApplication _: @escaping () -> Void) {}
+    func showInstallingUpdate(
+        withApplicationTerminated applicationTerminated: Bool,
+        retryTerminatingApplication: @escaping () -> Void
+    ) {
+        guard automaticallyInstallsUpdates, !applicationTerminated else {
+            return
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            retryTerminatingApplication()
+        }
+    }
 
     func showUpdateInstalledAndRelaunched(_: Bool) async {}
 
