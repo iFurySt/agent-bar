@@ -2,6 +2,21 @@ import AppKit
 import Sparkle
 import UserNotifications
 
+struct AgentBarUpdateStatus: Equatable {
+    enum State: Equatable {
+        case idle
+        case checking
+        case upToDate
+        case updateAvailable
+        case failed(String)
+    }
+
+    var currentVersion: String
+    var latestVersion: String?
+    var state: State
+    var canCheckForUpdates: Bool
+}
+
 @MainActor
 final class AgentBarUpdater: NSObject, SPUUpdaterDelegate {
     private let userDriver = AgentBarUpdateUserDriver()
@@ -10,17 +25,37 @@ final class AgentBarUpdater: NSObject, SPUUpdaterDelegate {
         applicationBundle: .main,
         userDriver: userDriver,
         delegate: self)
+    private var didStart = false
+    private var latestVersion: String?
+    private var availableVersion: String?
+    private var statusState: AgentBarUpdateStatus.State = .idle {
+        didSet {
+            notifyStatusChanged()
+        }
+    }
+    var onStatusChanged: ((AgentBarUpdateStatus) -> Void)?
 
     func start() {
         do {
             try updater.start()
+            didStart = true
             updater.clearFeedURLFromUserDefaults()
             updater.automaticallyChecksForUpdates = true
             syncAutomaticUpdateMode()
             updater.checkForUpdatesInBackground()
+            refreshUpdateStatus()
         } catch {
+            statusState = .failed(error.localizedDescription)
             NSLog("AgentBar updater failed to start: \(error.localizedDescription)")
         }
+    }
+
+    var status: AgentBarUpdateStatus {
+        AgentBarUpdateStatus(
+            currentVersion: Self.currentDisplayVersion,
+            latestVersion: availableVersion ?? latestVersion,
+            state: statusState,
+            canCheckForUpdates: didStart && updater.canCheckForUpdates)
     }
 
     var automaticallyChecksForUpdates: Bool {
@@ -34,15 +69,59 @@ final class AgentBarUpdater: NSObject, SPUUpdaterDelegate {
             if newValue {
                 updater.checkForUpdatesInBackground()
             }
+            notifyStatusChanged()
         }
+    }
+
+    func refreshUpdateStatus() {
+        guard didStart, updater.canCheckForUpdates else {
+            notifyStatusChanged()
+            return
+        }
+        statusState = .checking
+        updater.checkForUpdateInformation()
+    }
+
+    func checkForUpdatesFromAbout() {
+        guard didStart, updater.canCheckForUpdates else {
+            notifyStatusChanged()
+            return
+        }
+        statusState = .checking
+        updater.checkForUpdates()
     }
 
     func updaterShouldPromptForPermissionToCheck(forUpdates _: SPUUpdater) -> Bool {
         false
     }
 
-    func updater(_: SPUUpdater, shouldProceedWithUpdate updateItem: SUAppcastItem, updateCheck _: SPUUpdateCheck) throws {
-        if userDriver.shouldSkip(updateItem) {
+    func updater(_: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
+        let version = displayVersion(for: item)
+        latestVersion = version
+        availableVersion = version
+        statusState = .updateAvailable
+    }
+
+    func updaterDidNotFindUpdate(_: SPUUpdater, error: any Error) {
+        let userInfo = (error as NSError).userInfo
+        if let latestItem = userInfo[SPULatestAppcastItemFoundKey] as? SUAppcastItem {
+            latestVersion = displayVersion(for: latestItem)
+        } else {
+            latestVersion = Self.currentDisplayVersion
+        }
+        availableVersion = nil
+        statusState = .upToDate
+    }
+
+    func updater(_: SPUUpdater, didFinishUpdateCycleFor updateCheck: SPUUpdateCheck, error: (any Error)?) {
+        if let error, (error as NSError).domain != AgentBarUpdateUserDriver.errorDomain {
+            statusState = .failed(error.localizedDescription)
+        }
+        notifyStatusChanged()
+    }
+
+    func updater(_: SPUUpdater, shouldProceedWithUpdate updateItem: SUAppcastItem, updateCheck: SPUUpdateCheck) throws {
+        if updateCheck != .updates, userDriver.shouldSkip(updateItem) {
             throw NSError(
                 domain: AgentBarUpdateUserDriver.errorDomain,
                 code: 1,
@@ -60,6 +139,14 @@ final class AgentBarUpdater: NSObject, SPUUpdaterDelegate {
         AgentBarUpdateCompletionNotifier.rememberPendingUpdate(to: item)
     }
 
+    private func notifyStatusChanged() {
+        onStatusChanged?(status)
+    }
+
+    private func displayVersion(for item: SUAppcastItem) -> String {
+        item.displayVersionString.isEmpty ? item.versionString : item.displayVersionString
+    }
+
     private func syncAutomaticUpdateMode() {
         userDriver.automaticallyInstallsUpdates = updater.automaticallyDownloadsUpdates
         userDriver.enableAutomaticUpdates = { [weak self] in
@@ -68,6 +155,17 @@ final class AgentBarUpdater: NSObject, SPUUpdaterDelegate {
             updater.automaticallyDownloadsUpdates = true
             syncAutomaticUpdateMode()
         }
+    }
+
+    private static var currentDisplayVersion: String {
+        let info = Bundle.main.infoDictionary
+        if let shortVersion = info?["CFBundleShortVersionString"] as? String, !shortVersion.isEmpty {
+            return shortVersion
+        }
+        if let bundleVersion = info?["CFBundleVersion"] as? String, !bundleVersion.isEmpty {
+            return bundleVersion
+        }
+        return "0.0.0-dev"
     }
 }
 

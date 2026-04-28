@@ -140,6 +140,7 @@ final class AgentBarSettingsViewController: NSViewController {
         return formatter
     }()
     private let aboutCard = SettingsCardView()
+    private let updateRow = SettingsUpdateRowView()
     private var selectedPage: SettingsPage = .general
 
     init(
@@ -182,6 +183,8 @@ final class AgentBarSettingsViewController: NSViewController {
             detail: "github.com/iFurySt/agent-bar")
         githubRow.target = self
         githubRow.action = #selector(openGitHub)
+        updateRow.target = self
+        updateRow.action = #selector(checkForUpdatesFromAbout)
 
         configureSwitch(launchAtLoginSwitch, action: #selector(launchAtLoginChanged(_:)))
         configureSwitch(automaticUpdatesSwitch, action: #selector(automaticUpdatesChanged(_:)))
@@ -234,7 +237,8 @@ final class AgentBarSettingsViewController: NSViewController {
         usageCard.addSubview(usageDayChartView)
         usageCard.addSubview(usageHeatmapScrollView)
 
-        let aboutStack = NSStackView(views: [githubRow])
+        let aboutSeparator = InsetSeparatorView(inset: 20)
+        let aboutStack = NSStackView(views: [updateRow, aboutSeparator, githubRow])
         aboutStack.orientation = .vertical
         aboutStack.alignment = .leading
         aboutStack.spacing = 0
@@ -360,6 +364,10 @@ final class AgentBarSettingsViewController: NSViewController {
             usageDayChartView.heightAnchor.constraint(equalToConstant: TokenUsageHourlyChartView.contentHeight),
 
             githubRow.widthAnchor.constraint(equalTo: aboutStack.widthAnchor),
+            updateRow.widthAnchor.constraint(equalTo: aboutStack.widthAnchor),
+            aboutSeparator.widthAnchor.constraint(equalTo: aboutStack.widthAnchor),
+            updateRow.heightAnchor.constraint(equalToConstant: 58),
+            aboutSeparator.heightAnchor.constraint(equalToConstant: 0.5),
             githubRow.heightAnchor.constraint(equalToConstant: 48),
 
             usageTooltipOverlayView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
@@ -385,10 +393,14 @@ final class AgentBarSettingsViewController: NSViewController {
         }
 
         view = rootView
+        updater.onStatusChanged = { [weak self] status in
+            self?.applyUpdateStatus(status)
+        }
         showPage(selectedPage)
         refreshControls()
         refreshAccounts()
         refreshUsage()
+        applyUpdateStatus(updater.status)
     }
 
     private func configureScrollView(_ scrollView: NSScrollView, vertical: Bool, horizontal: Bool) {
@@ -406,6 +418,7 @@ final class AgentBarSettingsViewController: NSViewController {
         super.viewWillAppear()
         refreshControls()
         refreshAccounts()
+        applyUpdateStatus(updater.status)
     }
 
     private func settingsRow(title: String, control: SettingsSwitch) -> NSView {
@@ -723,6 +736,7 @@ final class AgentBarSettingsViewController: NSViewController {
             titleLabel.stringValue = "Usage"
         case .about:
             titleLabel.stringValue = "About"
+            updater.refreshUpdateStatus()
         }
         generalCard.isHidden = page != .general
         accountsSummaryLabel.superview?.isHidden = page != .accounts
@@ -801,6 +815,15 @@ final class AgentBarSettingsViewController: NSViewController {
     @objc private func openGitHub() {
         guard let url = URL(string: "https://github.com/iFurySt/agent-bar") else { return }
         NSWorkspace.shared.open(url)
+    }
+
+    @objc private func checkForUpdatesFromAbout() {
+        updater.checkForUpdatesFromAbout()
+        applyUpdateStatus(updater.status)
+    }
+
+    private func applyUpdateStatus(_ status: AgentBarUpdateStatus) {
+        updateRow.status = status
     }
 
     private func switchAccount(_ accountID: String) {
@@ -1336,6 +1359,126 @@ final class SettingsAccountsListView: NSView {
         let titleRect: NSRect
         let chipRect: NSRect?
         let switchRect: NSRect
+    }
+}
+
+final class SettingsUpdateRowView: NSControl {
+    var status: AgentBarUpdateStatus = AgentBarUpdateStatus(
+        currentVersion: "0.0.0-dev",
+        latestVersion: nil,
+        state: .idle,
+        canCheckForUpdates: false)
+    {
+        didSet {
+            updateContent()
+        }
+    }
+
+    private let titleLabel = NSTextField(labelWithString: "Version")
+    private let statusLabel = NSTextField(labelWithString: "")
+    private let actionButton = NSButton(title: "Check", target: nil, action: nil)
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        configure()
+    }
+
+    @available(*, unavailable)
+    required init?(coder _: NSCoder) {
+        nil
+    }
+
+    override var acceptsFirstResponder: Bool {
+        false
+    }
+
+    private func configure() {
+        translatesAutoresizingMaskIntoConstraints = false
+
+        titleLabel.font = .systemFont(ofSize: 11.8, weight: .regular)
+        titleLabel.textColor = .labelColor
+        titleLabel.lineBreakMode = .byTruncatingMiddle
+
+        statusLabel.font = .systemFont(ofSize: 11, weight: .regular)
+        statusLabel.textColor = .secondaryLabelColor
+        statusLabel.lineBreakMode = .byTruncatingTail
+
+        actionButton.bezelStyle = .rounded
+        actionButton.controlSize = .small
+        actionButton.font = .systemFont(ofSize: 11, weight: .medium)
+        actionButton.target = self
+        actionButton.action = #selector(actionPressed)
+        actionButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        let textStack = NSStackView(views: [titleLabel, statusLabel])
+        textStack.orientation = .vertical
+        textStack.alignment = .leading
+        textStack.spacing = 2
+        textStack.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        addSubview(textStack)
+        addSubview(actionButton)
+
+        textStack.translatesAutoresizingMaskIntoConstraints = false
+        actionButton.translatesAutoresizingMaskIntoConstraints = false
+
+        NSLayoutConstraint.activate([
+            textStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20),
+            textStack.centerYAnchor.constraint(equalTo: centerYAnchor),
+            textStack.trailingAnchor.constraint(lessThanOrEqualTo: actionButton.leadingAnchor, constant: -14),
+
+            actionButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -18),
+            actionButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+
+        updateContent()
+    }
+
+    private func updateContent() {
+        titleLabel.stringValue = "Version \(status.currentVersion)"
+        statusLabel.stringValue = statusText
+        actionButton.title = actionTitle
+        actionButton.isEnabled = status.canCheckForUpdates && !isChecking
+    }
+
+    private var isChecking: Bool {
+        if case .checking = status.state {
+            return true
+        }
+        return false
+    }
+
+    private var statusText: String {
+        switch status.state {
+        case .idle:
+            return "Update status not checked yet"
+        case .checking:
+            return "Checking for updates..."
+        case .upToDate:
+            if let latestVersion = status.latestVersion, latestVersion != status.currentVersion {
+                return "Latest compatible version is \(latestVersion)"
+            }
+            return "You are up to date"
+        case .updateAvailable:
+            return "AgentBar \(status.latestVersion ?? "newer version") is available"
+        case let .failed(message):
+            return "Update check failed: \(message)"
+        }
+    }
+
+    private var actionTitle: String {
+        switch status.state {
+        case .checking:
+            return "Checking..."
+        case .updateAvailable:
+            return "Update"
+        default:
+            return "Check"
+        }
+    }
+
+    @objc private func actionPressed() {
+        sendAction(action, to: target)
     }
 }
 

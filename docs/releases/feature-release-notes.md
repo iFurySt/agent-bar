@@ -4,6 +4,7 @@
 
 | 日期 | 功能域 | 用户价值 | 变更摘要 |
 | --- | --- | --- | --- |
+| 2026-04-28 | About | About 页面现在显示当前版本、是否已是最新版本，并在可更新时提供直接触发更新的按钮。 | About 打开时通过 Sparkle probing check 刷新状态；按钮调用 Sparkle 用户触发更新检查，沿用现有下载、自动安装和手动确认流程。 |
 | 2026-04-27 | 设置窗口 | Usage 页可以在 Year 年度热力图和 Day 分时柱状图之间切换，既看长期趋势，也能按天查看小时级 token 峰值和模型构成。 | Usage header 新增原生 Day/Year segmented control，默认保持 Year 年度热力图；Year 汇总下移到年份切换同一行并简化为 `Total x Tokens`；Day 在同一位置提供日期左右切换，跨月/跨年按自然日处理，并读取所选日期 00-23 点 token 增量，右侧总量同样简化为 `Total x Tokens`；按当天实际出现的模型生成堆叠柱颜色和图例；小时柱 tooltip 只向上展开，堆叠柱只在最上方保留上圆角，窗口变窄时柱间距自动缩小，最窄可贴合。 |
 | 2026-04-27 | 设置窗口 | gear 打开的 General、Accounts、Usage 和 About 页面保持干净的无滚动条外观，滚动时也不会露出系统 scroller。 | 设置窗口主内容滚动视图和 Usage 热力图横向滚动视图保留滚动手势，但不创建可见 scroller。 |
 | 2026-04-27 | 设置窗口 | 打开 gear 设置窗口时会自动适配系统 Light/Dark 模式，不再在 Dark 模式下出现浅色背景上的白色文字。 | 将 Settings palette 改成基于 `NSAppearance` 的动态颜色，并让 layer-backed 背景、卡片、分隔线和 Usage heatmap 辅助色在 appearance 变化时刷新。 |
