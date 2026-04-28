@@ -2458,7 +2458,7 @@ final class VibeCodingTimeChartView: NSView {
         let title = "Vibe Coding Time"
         title.draw(at: NSPoint(x: 0, y: bounds.maxY - 16), withAttributes: titleAttributes)
 
-        let total = "\(Self.formatDuration(snapshot.totalMinutes)) Total"
+        let total = "Total \(Self.formatDuration(snapshot.totalMinutes, compact: true))"
         let totalSize = total.size(withAttributes: totalAttributes)
         let dotSize: CGFloat = 7
         let gap: CGFloat = 7
@@ -2585,12 +2585,13 @@ final class VibeCodingTimeChartView: NSView {
         return Int(ceil(Double(value) / 60)) * 60
     }
 
-    fileprivate static func formatDuration(_ minutes: Double) -> String {
+    fileprivate static func formatDuration(_ minutes: Double, compact: Bool = false) -> String {
         let rounded = max(0, Int(minutes.rounded()))
         let hours = rounded / 60
         let mins = rounded % 60
         if hours > 0 {
-            return "\(hours)h \(mins)m"
+            let separator = compact ? "" : " "
+            return "\(hours)h\(separator)\(mins)m"
         }
         return "\(mins)m"
     }
