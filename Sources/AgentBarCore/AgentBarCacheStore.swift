@@ -120,6 +120,7 @@ struct CachedCostFile: Codable, Equatable, Sendable {
     let metadata: CachedFileMetadata
     let days: [String: [String: TokenTotals]]
     var hours: [String: [String: [String: TokenTotals]]]? = nil
+    var timeZoneIdentifier: String? = nil
 
     var needsPricingRefresh: Bool {
         days.values.contains { models in

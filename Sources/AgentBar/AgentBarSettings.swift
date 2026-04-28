@@ -114,8 +114,10 @@ final class AgentBarSettingsViewController: NSViewController {
     private var accountsListHeightConstraint: NSLayoutConstraint?
     private var contentBottomConstraint: NSLayoutConstraint?
     private let usageCard = SettingsCardView()
+    private let usageVibeCard = SettingsCardView()
     private let usageModeControl = NSSegmentedControl(labels: ["Day", "Year"], trackingMode: .selectOne, target: nil, action: nil)
     private let usageDayChartView = TokenUsageHourlyChartView()
+    private let usageVibeChartView = VibeCodingTimeChartView()
     private let usageHeatmapScrollView = NSScrollView()
     private let usageHeatmapView = TokenUsageHeatmapView()
     private let usageTooltipOverlayView = UsageTooltipOverlayView()
@@ -130,12 +132,18 @@ final class AgentBarSettingsViewController: NSViewController {
     private let usageNextYearButton = SettingsIconButton(symbolName: "chevron.right", accessibilityDescription: "Next year")
     private let usageYearLabel = NSTextField(labelWithString: "")
     private var usageViewMode: UsageViewMode = .year
-    private var selectedUsageDay = Calendar.current.startOfDay(for: Date())
-    private var selectedUsageYear = Calendar.current.component(.year, from: Date())
-    private var usageYearRange = Calendar.current.component(.year, from: Date())...Calendar.current.component(.year, from: Date())
+    private static var usageCalendar: Calendar {
+        var calendar = Calendar.autoupdatingCurrent
+        calendar.timeZone = .autoupdatingCurrent
+        return calendar
+    }
+    private var selectedUsageDay = usageCalendar.startOfDay(for: Date())
+    private var selectedUsageYear = usageCalendar.component(.year, from: Date())
+    private var usageYearRange = usageCalendar.component(.year, from: Date())...usageCalendar.component(.year, from: Date())
     private let usageDayFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = .autoupdatingCurrent
         formatter.dateFormat = "MMMM d, yyyy"
         return formatter
     }()
@@ -210,6 +218,7 @@ final class AgentBarSettingsViewController: NSViewController {
                 return
             }
             usageTooltipOverlayView.hoveredHourItem = nil
+            usageTooltipOverlayView.hoveredActivityItem = nil
             usageTooltipOverlayView.hoveredItem = (
                 rect: usageHeatmapView.convert(rect, to: usageTooltipOverlayView),
                 entry: entry)
@@ -220,14 +229,28 @@ final class AgentBarSettingsViewController: NSViewController {
                 return
             }
             usageTooltipOverlayView.hoveredItem = nil
+            usageTooltipOverlayView.hoveredActivityItem = nil
             usageTooltipOverlayView.hoveredHourItem = UsageHourlyTooltipItem(
                 point: usageDayChartView.convert(point, to: usageTooltipOverlayView),
                 hour: hour,
                 buckets: buckets)
         }
+        usageVibeChartView.onHoverChanged = { [weak self] point, hour in
+            guard let self, let point, let hour else {
+                self?.usageTooltipOverlayView.hoveredActivityItem = nil
+                return
+            }
+            usageTooltipOverlayView.hoveredItem = nil
+            usageTooltipOverlayView.hoveredHourItem = nil
+            usageTooltipOverlayView.hoveredActivityItem = UsageActivityTooltipItem(
+                point: usageVibeChartView.convert(point, to: usageTooltipOverlayView),
+                hour: hour)
+        }
         configureScrollView(usageHeatmapScrollView, vertical: false, horizontal: true)
         usageDayChartView.isHidden = true
+        usageVibeCard.isHidden = true
         usageDayChartView.translatesAutoresizingMaskIntoConstraints = false
+        usageVibeChartView.translatesAutoresizingMaskIntoConstraints = false
         usageHeatmapView.frame = NSRect(
             x: 0,
             y: 0,
@@ -236,6 +259,7 @@ final class AgentBarSettingsViewController: NSViewController {
         usageHeatmapScrollView.documentView = usageHeatmapView
         usageCard.addSubview(usageDayChartView)
         usageCard.addSubview(usageHeatmapScrollView)
+        usageVibeCard.addSubview(usageVibeChartView)
 
         let aboutSeparator = InsetSeparatorView(inset: 20)
         let aboutStack = NSStackView(views: [updateRow, aboutSeparator, githubRow])
@@ -254,6 +278,7 @@ final class AgentBarSettingsViewController: NSViewController {
         contentView.addSubview(accountsCard)
         contentView.addSubview(usageHeader)
         contentView.addSubview(usageCard)
+        contentView.addSubview(usageVibeCard)
         contentView.addSubview(aboutCard)
         contentView.addSubview(usageTooltipOverlayView)
 
@@ -268,7 +293,9 @@ final class AgentBarSettingsViewController: NSViewController {
             accountsCard,
             usageHeader,
             usageCard,
+            usageVibeCard,
             usageDayChartView,
+            usageVibeChartView,
             usageHeatmapScrollView,
             aboutCard,
             usageTooltipOverlayView,
@@ -308,6 +335,10 @@ final class AgentBarSettingsViewController: NSViewController {
             usageCard.leadingAnchor.constraint(equalTo: generalCard.leadingAnchor),
             usageCard.trailingAnchor.constraint(equalTo: generalCard.trailingAnchor),
             usageCard.topAnchor.constraint(equalTo: usageHeader.bottomAnchor, constant: 10),
+
+            usageVibeCard.leadingAnchor.constraint(equalTo: usageCard.leadingAnchor),
+            usageVibeCard.trailingAnchor.constraint(equalTo: usageCard.trailingAnchor),
+            usageVibeCard.topAnchor.constraint(equalTo: usageCard.bottomAnchor, constant: 10),
 
             usageHeader.leadingAnchor.constraint(equalTo: generalCard.leadingAnchor, constant: 8),
             usageHeader.trailingAnchor.constraint(equalTo: generalCard.trailingAnchor, constant: -8),
@@ -362,6 +393,12 @@ final class AgentBarSettingsViewController: NSViewController {
             usageDayChartView.topAnchor.constraint(equalTo: usageCard.topAnchor, constant: 16),
             usageDayChartView.bottomAnchor.constraint(equalTo: usageCard.bottomAnchor, constant: -16),
             usageDayChartView.heightAnchor.constraint(equalToConstant: TokenUsageHourlyChartView.contentHeight),
+
+            usageVibeChartView.leadingAnchor.constraint(equalTo: usageVibeCard.leadingAnchor, constant: 16),
+            usageVibeChartView.trailingAnchor.constraint(equalTo: usageVibeCard.trailingAnchor, constant: -16),
+            usageVibeChartView.topAnchor.constraint(equalTo: usageVibeCard.topAnchor, constant: 16),
+            usageVibeChartView.bottomAnchor.constraint(equalTo: usageVibeCard.bottomAnchor, constant: -16),
+            usageVibeChartView.heightAnchor.constraint(equalToConstant: VibeCodingTimeChartView.contentHeight),
 
             githubRow.widthAnchor.constraint(equalTo: aboutStack.widthAnchor),
             updateRow.widthAnchor.constraint(equalTo: aboutStack.widthAnchor),
@@ -545,27 +582,27 @@ final class AgentBarSettingsViewController: NSViewController {
         container.addSubview(usageSummaryLabel)
 
         NSLayoutConstraint.activate([
-            container.heightAnchor.constraint(equalToConstant: 56),
+            container.heightAnchor.constraint(equalToConstant: 54),
 
             titleLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            titleLabel.centerYAnchor.constraint(equalTo: usageModeControl.centerYAnchor),
-            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: usageModeControl.leadingAnchor, constant: -18),
+            titleLabel.topAnchor.constraint(equalTo: container.topAnchor),
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor),
 
-            usageModeControl.centerXAnchor.constraint(equalTo: container.centerXAnchor),
-            usageModeControl.topAnchor.constraint(equalTo: container.topAnchor),
-            usageModeControl.widthAnchor.constraint(equalToConstant: 124),
+            usageModeControl.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            usageModeControl.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 10),
+            usageModeControl.widthAnchor.constraint(equalToConstant: 84),
             usageModeControl.heightAnchor.constraint(equalToConstant: 24),
 
             dayControl.centerXAnchor.constraint(equalTo: container.centerXAnchor),
-            dayControl.topAnchor.constraint(equalTo: usageModeControl.bottomAnchor, constant: 8),
+            dayControl.centerYAnchor.constraint(equalTo: usageModeControl.centerYAnchor),
             usagePreviousDayButton.widthAnchor.constraint(equalToConstant: 22),
             usagePreviousDayButton.heightAnchor.constraint(equalToConstant: 22),
             usageNextDayButton.widthAnchor.constraint(equalToConstant: 22),
             usageNextDayButton.heightAnchor.constraint(equalToConstant: 22),
-            usageDayLabel.widthAnchor.constraint(equalToConstant: 138),
+            usageDayLabel.widthAnchor.constraint(equalToConstant: 118),
 
             yearControl.centerXAnchor.constraint(equalTo: container.centerXAnchor),
-            yearControl.topAnchor.constraint(equalTo: usageModeControl.bottomAnchor, constant: 8),
+            yearControl.centerYAnchor.constraint(equalTo: usageModeControl.centerYAnchor),
             usagePreviousYearButton.widthAnchor.constraint(equalToConstant: 22),
             usagePreviousYearButton.heightAnchor.constraint(equalToConstant: 22),
             usageNextYearButton.widthAnchor.constraint(equalToConstant: 22),
@@ -573,9 +610,9 @@ final class AgentBarSettingsViewController: NSViewController {
             usageYearLabel.widthAnchor.constraint(equalToConstant: 48),
 
             usageSummaryLabel.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            usageSummaryLabel.centerYAnchor.constraint(equalTo: yearControl.centerYAnchor),
-            usageSummaryLabel.leadingAnchor.constraint(greaterThanOrEqualTo: dayControl.trailingAnchor, constant: 18),
-            usageSummaryLabel.leadingAnchor.constraint(greaterThanOrEqualTo: yearControl.trailingAnchor, constant: 18),
+            usageSummaryLabel.centerYAnchor.constraint(equalTo: usageModeControl.centerYAnchor),
+            usageSummaryLabel.leadingAnchor.constraint(greaterThanOrEqualTo: dayControl.trailingAnchor, constant: 10),
+            usageSummaryLabel.leadingAnchor.constraint(greaterThanOrEqualTo: yearControl.trailingAnchor, constant: 10),
         ])
 
         return container
@@ -633,14 +670,25 @@ final class AgentBarSettingsViewController: NSViewController {
 
     private func refreshUsage() {
         let scanner = CodexCostScanner()
+        let activityScanner = CodexActivityScanner()
         let year = selectedUsageYear
         let day = selectedUsageDay
         let task = Task.detached(priority: .utility) {
-            (scanner.yearlyTokenUsage(year: year), scanner.usageYearRange(), scanner.hourlyTokenUsage(on: day))
+            (
+                scanner.yearlyTokenUsage(year: year),
+                scanner.usageYearRange(),
+                scanner.hourlyTokenUsage(on: day),
+                activityScanner.hourlyActivityUsage(on: day))
         }
         Task { [weak self] in
-            let (snapshot, yearRange, hourlySnapshot) = await task.value
-            self?.applyUsage(snapshot, yearRange: yearRange, year: year, day: day, hourlySnapshot: hourlySnapshot)
+            let (snapshot, yearRange, hourlySnapshot, activitySnapshot) = await task.value
+            self?.applyUsage(
+                snapshot,
+                yearRange: yearRange,
+                year: year,
+                day: day,
+                hourlySnapshot: hourlySnapshot,
+                activitySnapshot: activitySnapshot)
         }
     }
 
@@ -661,13 +709,15 @@ final class AgentBarSettingsViewController: NSViewController {
         yearRange: ClosedRange<Int>,
         year: Int,
         day: Date,
-        hourlySnapshot: CodexHourlyTokenUsageSnapshot)
+        hourlySnapshot: CodexHourlyTokenUsageSnapshot,
+        activitySnapshot: CodexActivityUsageSnapshot)
     {
         usageYearRange = yearRange
         selectedUsageYear = min(max(year, yearRange.lowerBound), yearRange.upperBound)
-        selectedUsageDay = Calendar.current.startOfDay(for: day)
+        selectedUsageDay = Self.usageCalendar.startOfDay(for: day)
         usageHeatmapView.snapshot = snapshot
         usageDayChartView.snapshot = hourlySnapshot
+        usageVibeChartView.snapshot = activitySnapshot
         usageYearLabel.stringValue = "\(selectedUsageYear)"
         usagePreviousYearButton.isEnabled = selectedUsageYear > usageYearRange.lowerBound
         usageNextYearButton.isEnabled = selectedUsageYear < usageYearRange.upperBound
@@ -677,18 +727,18 @@ final class AgentBarSettingsViewController: NSViewController {
     }
 
     @objc private func previousUsageDay() {
-        guard let day = Calendar.current.date(byAdding: .day, value: -1, to: selectedUsageDay) else { return }
-        selectedUsageDay = Calendar.current.startOfDay(for: day)
+        guard let day = Self.usageCalendar.date(byAdding: .day, value: -1, to: selectedUsageDay) else { return }
+        selectedUsageDay = Self.usageCalendar.startOfDay(for: day)
         updateUsageDayControls()
         refreshUsage()
     }
 
     @objc private func nextUsageDay() {
-        let today = Calendar.current.startOfDay(for: Date())
+        let today = Self.usageCalendar.startOfDay(for: Date())
         guard selectedUsageDay < today,
-              let day = Calendar.current.date(byAdding: .day, value: 1, to: selectedUsageDay)
+              let day = Self.usageCalendar.date(byAdding: .day, value: 1, to: selectedUsageDay)
         else { return }
-        selectedUsageDay = min(Calendar.current.startOfDay(for: day), today)
+        selectedUsageDay = min(Self.usageCalendar.startOfDay(for: day), today)
         updateUsageDayControls()
         refreshUsage()
     }
@@ -746,7 +796,6 @@ final class AgentBarSettingsViewController: NSViewController {
         updateUsageModeVisibility()
         aboutCard.isHidden = page != .about
         sidebar.select(page)
-        updateContentBottomConstraint(for: page)
     }
 
     private func updateContentBottomConstraint(for page: SettingsPage) {
@@ -758,7 +807,7 @@ final class AgentBarSettingsViewController: NSViewController {
         case .accounts:
             targetView = accountsCard
         case .usage:
-            targetView = usageCard
+            targetView = usageViewMode == .day ? usageVibeCard : usageCard
         case .about:
             targetView = aboutCard
         }
@@ -783,7 +832,7 @@ final class AgentBarSettingsViewController: NSViewController {
 
     private func updateUsageDayControls() {
         usageDayLabel.stringValue = usageDayFormatter.string(from: selectedUsageDay)
-        usageNextDayButton.isEnabled = selectedUsageDay < Calendar.current.startOfDay(for: Date())
+        usageNextDayButton.isEnabled = selectedUsageDay < Self.usageCalendar.startOfDay(for: Date())
     }
 
     private func updateUsageModeVisibility() {
@@ -793,9 +842,10 @@ final class AgentBarSettingsViewController: NSViewController {
         let showingDay = showingUsage && usageViewMode == .day
         usageDayControl?.isHidden = !showingDay
         usageYearControl?.isHidden = !showingYear
-        usageSummaryLabel.isHidden = !(showingYear || showingDay)
+        usageSummaryLabel.isHidden = !showingYear
         usageHeatmapScrollView.isHidden = !showingYear
         usageDayChartView.isHidden = !showingDay
+        usageVibeCard.isHidden = !showingDay
         usageTooltipOverlayView.isHidden = !showingUsage
         updateUsageSummaryLabel()
         if !showingYear {
@@ -803,7 +853,9 @@ final class AgentBarSettingsViewController: NSViewController {
         }
         if !showingDay {
             usageTooltipOverlayView.hoveredHourItem = nil
+            usageTooltipOverlayView.hoveredActivityItem = nil
         }
+        updateContentBottomConstraint(for: selectedPage)
     }
 
     @objc private func usageModeChanged(_ sender: NSSegmentedControl) {
@@ -1566,6 +1618,7 @@ final class TokenUsageHeatmapView: NSView {
     private lazy var dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = .autoupdatingCurrent
         formatter.dateFormat = "EEE, MMM d, yyyy"
         return formatter
     }()
@@ -1653,7 +1706,7 @@ final class TokenUsageHeatmapView: NSView {
 
     private func makeCellRects(for entries: [CodexDailyTokenUsage]) -> [(rect: NSRect, entry: CodexDailyTokenUsage)] {
         guard let first = entries.first else { return [] }
-        let calendar = Calendar.current
+        let calendar = Calendar.autoupdatingCurrent
         let weekday = calendar.component(.weekday, from: first.day) - 1
         let pitch = Self.cellSize + Self.cellGap
         let totalWidth = Self.weekCount * pitch - Self.cellGap
@@ -1675,9 +1728,10 @@ final class TokenUsageHeatmapView: NSView {
 
     private func drawMonthLabels(entries: [CodexDailyTokenUsage]) {
         guard !cellRects.isEmpty else { return }
-        let calendar = Calendar.current
+        let calendar = Calendar.autoupdatingCurrent
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = .autoupdatingCurrent
         formatter.setLocalizedDateFormatFromTemplate("MMM")
         var drawnMonths: Set<Int> = []
         let labelY = (cellRects.map { $0.rect.maxY }.max() ?? 0) + 10
@@ -1818,6 +1872,11 @@ fileprivate struct UsageHourlyTooltipBucket {
     let tokens: Int
 }
 
+fileprivate struct UsageActivityTooltipItem {
+    let point: NSPoint
+    let hour: CodexActivityHourUsage
+}
+
 final class UsageTooltipOverlayView: NSView {
     var hoveredItem: (rect: NSRect, entry: CodexDailyTokenUsage)? {
         didSet {
@@ -1829,10 +1888,16 @@ final class UsageTooltipOverlayView: NSView {
             needsDisplay = true
         }
     }
+    fileprivate var hoveredActivityItem: UsageActivityTooltipItem? {
+        didSet {
+            needsDisplay = true
+        }
+    }
 
     private lazy var dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = .autoupdatingCurrent
         formatter.dateFormat = "EEE, MMM d, yyyy"
         return formatter
     }()
@@ -1847,7 +1912,9 @@ final class UsageTooltipOverlayView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
-        if let hoveredHourItem {
+        if let hoveredActivityItem {
+            drawActivityTooltip(hoveredActivityItem)
+        } else if let hoveredHourItem {
             drawHourlyTooltip(hoveredHourItem)
         } else if let hoveredItem {
             TokenUsageHeatmapView.drawTooltip(
@@ -1855,6 +1922,43 @@ final class UsageTooltipOverlayView: NSView {
                 in: bounds,
                 dateFormatter: dateFormatter)
         }
+    }
+
+    private func drawActivityTooltip(_ item: UsageActivityTooltipItem) {
+        let title = String(format: "%02d:00", item.hour.hour)
+        let total = "\(VibeCodingTimeChartView.formatDuration(item.hour.minutes)) active"
+
+        let titleAttributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 12.6, weight: .semibold),
+            .foregroundColor: NSColor.white,
+        ]
+        let totalAttributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 11.8, weight: .medium),
+            .foregroundColor: AgentBarSettingsPalette.heatmapTooltipTokens,
+        ]
+        let titleSize = title.size(withAttributes: titleAttributes)
+        let totalSize = total.size(withAttributes: totalAttributes)
+        let width = min(max(132, max(titleSize.width, totalSize.width) + 24), max(132, bounds.width - 12))
+        let height: CGFloat = 56
+        let preferredX = item.point.x - width / 2
+        let x = min(max(6, preferredX), max(6, bounds.width - width - 6))
+        let preferredY = item.point.y + 18
+        let y = min(max(6, preferredY), max(6, bounds.maxY - height - 6))
+        let rect = NSRect(x: x, y: y, width: width, height: height)
+
+        AgentBarSettingsPalette.heatmapTooltipBackground.setFill()
+        NSBezierPath(roundedRect: rect, xRadius: 7, yRadius: 7).fill()
+
+        let pointer = NSBezierPath()
+        let pointerX = min(max(item.point.x, rect.minX + 14), rect.maxX - 14)
+        pointer.move(to: NSPoint(x: pointerX - 7, y: rect.minY))
+        pointer.line(to: NSPoint(x: pointerX, y: rect.minY - 8))
+        pointer.line(to: NSPoint(x: pointerX + 7, y: rect.minY))
+        pointer.close()
+        pointer.fill()
+
+        title.draw(at: NSPoint(x: rect.minX + 12, y: rect.maxY - 22), withAttributes: titleAttributes)
+        total.draw(at: NSPoint(x: rect.minX + 12, y: rect.maxY - 42), withAttributes: totalAttributes)
     }
 
     private func drawHourlyTooltip(_ item: UsageHourlyTooltipItem) {
@@ -1948,17 +2052,36 @@ final class TokenUsageHourlyChartView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
 
-        let titleAttributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 11.6, weight: .semibold),
-            .foregroundColor: AgentBarSettingsPalette.heatmapLabel,
-        ]
-        "Tokens".draw(at: NSPoint(x: 0, y: bounds.maxY - 16), withAttributes: titleAttributes)
-
+        drawHeader()
         let plotRect = NSRect(x: 50, y: 58, width: max(120, bounds.width - 58), height: max(44, bounds.height - 92))
         drawGrid(in: plotRect)
         drawBars(in: plotRect)
         drawHourLabels(in: plotRect)
         drawLegend(in: NSRect(x: plotRect.minX, y: 0, width: plotRect.width, height: 34))
+    }
+
+    private func drawHeader() {
+        let titleAttributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 11.6, weight: .semibold),
+            .foregroundColor: AgentBarSettingsPalette.heatmapLabel,
+        ]
+        let totalAttributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 11.2, weight: .medium),
+            .foregroundColor: NSColor.secondaryLabelColor,
+        ]
+        "Tokens".draw(at: NSPoint(x: 0, y: bounds.maxY - 16), withAttributes: titleAttributes)
+
+        let total = "Total \(AgentBarDisplayFormatting.tokens(snapshot.totalTokens)) Tokens"
+        let totalSize = total.size(withAttributes: totalAttributes)
+        let dotSize: CGFloat = 7
+        let gap: CGFloat = 7
+        let groupWidth = dotSize + gap + totalSize.width
+        let groupX = max(0, bounds.maxX - groupWidth)
+        let textY = bounds.maxY - 17
+        let dotY = textY + totalSize.height / 2 - dotSize / 2
+        (activeModelBuckets.first?.color ?? AgentBarSettingsPalette.chartOther).setFill()
+        NSBezierPath(ovalIn: NSRect(x: groupX, y: dotY, width: dotSize, height: dotSize)).fill()
+        total.draw(at: NSPoint(x: groupX + dotSize + gap, y: textY), withAttributes: totalAttributes)
     }
 
     override func updateTrackingAreas() {
@@ -2246,6 +2369,230 @@ final class TokenUsageHourlyChartView: NSView {
             }
             return part.prefix(1).uppercased() + part.dropFirst()
         }.joined(separator: " ")
+    }
+}
+
+final class VibeCodingTimeChartView: NSView {
+    static let contentHeight: CGFloat = TokenUsageHeatmapView.contentHeight
+
+    var snapshot = CodexActivityUsageSnapshot(day: Date(), dayKey: "", hours: []) {
+        didSet {
+            hoveredHour = nil
+            onHoverChanged?(nil, nil)
+            needsDisplay = true
+        }
+    }
+    fileprivate var onHoverChanged: ((NSPoint?, CodexActivityHourUsage?) -> Void)?
+
+    private var pointHitRects: [(rect: NSRect, hour: CodexActivityHourUsage, point: NSPoint)] = []
+    private var hoveredHour: CodexActivityHourUsage?
+    private var trackingArea: NSTrackingArea?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
+        setContentHuggingPriority(.defaultLow, for: .horizontal)
+        setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    }
+
+    @available(*, unavailable)
+    required init?(coder _: NSCoder) {
+        nil
+    }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: NSView.noIntrinsicMetric, height: Self.contentHeight)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+
+        drawHeader()
+        let plotRect = NSRect(x: 50, y: 30, width: max(120, bounds.width - 58), height: max(48, bounds.height - 64))
+        drawGrid(in: plotRect)
+        drawCurve(in: plotRect)
+        drawHourLabels(in: plotRect)
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea {
+            removeTrackingArea(trackingArea)
+        }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.activeAlways, .inVisibleRect, .mouseEnteredAndExited, .mouseMoved],
+            owner: self)
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        let next = pointHitRects.first { $0.rect.contains(point) }
+        onHoverChanged?(next?.point, next?.hour)
+        guard next?.hour.hour != hoveredHour?.hour else {
+            needsDisplay = true
+            return
+        }
+        hoveredHour = next?.hour
+        needsDisplay = true
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        hoveredHour = nil
+        onHoverChanged?(nil, nil)
+        needsDisplay = true
+    }
+
+    private func drawHeader() {
+        let titleAttributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 11.6, weight: .semibold),
+            .foregroundColor: AgentBarSettingsPalette.heatmapLabel,
+        ]
+        let totalAttributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 11.2, weight: .medium),
+            .foregroundColor: NSColor.secondaryLabelColor,
+        ]
+        let title = "Vibe Coding Time"
+        title.draw(at: NSPoint(x: 0, y: bounds.maxY - 16), withAttributes: titleAttributes)
+
+        let total = "\(Self.formatDuration(snapshot.totalMinutes)) Total"
+        let totalSize = total.size(withAttributes: totalAttributes)
+        let dotSize: CGFloat = 7
+        let gap: CGFloat = 7
+        let groupWidth = dotSize + gap + totalSize.width
+        let groupX = max(0, bounds.maxX - groupWidth)
+        let textY = bounds.maxY - 17
+        let dotY = textY + totalSize.height / 2 - dotSize / 2
+        let dotRect = NSRect(x: groupX, y: dotY, width: dotSize, height: dotSize)
+        AgentBarSettingsPalette.chartClaude.setFill()
+        NSBezierPath(ovalIn: dotRect).fill()
+
+        total.draw(at: NSPoint(x: dotRect.maxX + gap, y: textY), withAttributes: totalAttributes)
+    }
+
+    private func drawGrid(in plotRect: NSRect) {
+        let maximum = axisMaximum
+        let ticks = [0, maximum / 2, maximum]
+        let labelAttributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 10.8, weight: .regular),
+            .foregroundColor: AgentBarSettingsPalette.heatmapLabel,
+        ]
+
+        for (index, value) in ticks.enumerated() {
+            let y = plotRect.minY + CGFloat(index) / CGFloat(ticks.count - 1) * plotRect.height
+            AgentBarSettingsPalette.chartGrid.setStroke()
+            let path = NSBezierPath()
+            path.lineWidth = 0.7
+            path.move(to: NSPoint(x: plotRect.minX, y: y))
+            path.line(to: NSPoint(x: plotRect.maxX, y: y))
+            path.stroke()
+
+            let label = value == 0 ? "0" : "\(value)m"
+            let size = label.size(withAttributes: labelAttributes)
+            label.draw(
+                at: NSPoint(x: plotRect.minX - size.width - 10, y: y - size.height / 2),
+                withAttributes: labelAttributes)
+        }
+    }
+
+    private func drawCurve(in plotRect: NSRect) {
+        let hours = normalizedHours
+        pointHitRects = []
+        guard hours.contains(where: { $0.minutes > 0 }) else { return }
+
+        let maximum = Double(axisMaximum)
+        let slotWidth = plotRect.width / 24
+        let points = hours.map { hour -> NSPoint in
+            let x = plotRect.minX + CGFloat(hour.hour) * slotWidth + slotWidth / 2
+            let y = plotRect.minY + min(1, max(0, CGFloat(hour.minutes / maximum))) * plotRect.height
+            return NSPoint(x: x, y: y)
+        }
+
+        let area = NSBezierPath()
+        area.move(to: NSPoint(x: points[0].x, y: plotRect.minY))
+        for point in points {
+            area.line(to: point)
+        }
+        area.line(to: NSPoint(x: points[points.count - 1].x, y: plotRect.minY))
+        area.close()
+        NSGradient(
+            starting: AgentBarSettingsPalette.chartClaude.withAlphaComponent(0.22),
+            ending: AgentBarSettingsPalette.chartClaude.withAlphaComponent(0.02))?
+            .draw(in: area, angle: 90)
+
+        let line = NSBezierPath()
+        line.move(to: points[0])
+        for point in points.dropFirst() {
+            line.line(to: point)
+        }
+        AgentBarSettingsPalette.chartClaude.setStroke()
+        line.lineWidth = 2
+        line.stroke()
+
+        for (index, point) in points.enumerated() where point.y > plotRect.minY + 0.5 {
+            let hour = hours[index]
+            pointHitRects.append((
+                rect: NSRect(x: point.x - max(6, slotWidth * 0.35), y: point.y - 8, width: max(12, slotWidth * 0.7), height: 16),
+                hour: hour,
+                point: point))
+            AgentBarSettingsPalette.cardBackground.setFill()
+            AgentBarSettingsPalette.chartClaude.setStroke()
+            let isHovered = hoveredHour?.hour == hour.hour
+            let radius: CGFloat = isHovered ? 4 : 3
+            let dot = NSBezierPath(ovalIn: NSRect(x: point.x - radius, y: point.y - radius, width: radius * 2, height: radius * 2))
+            dot.lineWidth = isHovered ? 2 : 1.5
+            dot.fill()
+            dot.stroke()
+        }
+    }
+
+    private func drawHourLabels(in plotRect: NSRect) {
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 10.8, weight: .regular),
+            .foregroundColor: AgentBarSettingsPalette.heatmapLabel,
+        ]
+        let slotWidth = plotRect.width / 24
+        for hour in stride(from: 0, through: 24, by: 4) {
+            let label = hour == 24 ? "Hours" : String(format: "%02d", hour)
+            let size = label.size(withAttributes: attributes)
+            let x = hour == 24
+                ? plotRect.maxX - size.width
+                : plotRect.minX + CGFloat(hour) * slotWidth + slotWidth / 2 - size.width / 2
+            label.draw(at: NSPoint(x: x, y: plotRect.minY - 22), withAttributes: attributes)
+        }
+    }
+
+    private var normalizedHours: [CodexActivityHourUsage] {
+        if snapshot.hours.count == 24 { return snapshot.hours }
+        return (0..<24).map { hour in
+            snapshot.hours.first { $0.hour == hour } ?? CodexActivityHourUsage(hour: hour, minutes: 0)
+        }
+    }
+
+    private var axisMaximum: Int {
+        let value = max(60, Int(ceil(snapshot.maxHourlyMinutes)))
+        return Self.niceMinuteMaximum(value)
+    }
+
+    private static func niceMinuteMaximum(_ value: Int) -> Int {
+        if value <= 60 { return 60 }
+        if value <= 120 { return 120 }
+        if value <= 180 { return 180 }
+        if value <= 240 { return 240 }
+        return Int(ceil(Double(value) / 60)) * 60
+    }
+
+    fileprivate static func formatDuration(_ minutes: Double) -> String {
+        let rounded = max(0, Int(minutes.rounded()))
+        let hours = rounded / 60
+        let mins = rounded % 60
+        if hours > 0 {
+            return "\(hours)h \(mins)m"
+        }
+        return "\(mins)m"
     }
 }
 

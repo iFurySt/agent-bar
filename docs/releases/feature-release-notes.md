@@ -5,6 +5,9 @@
 | 日期 | 功能域 | 用户价值 | 变更摘要 |
 | --- | --- | --- | --- |
 | 2026-04-28 | 多屏体验 | 新用户安装并启动后能立刻看到 AgentBar 已经运行，减少“应用是不是没打开”的困惑。 | `AgentBar.pinnedOpen` 缺省值改为 pinned open；只有用户主动取消 pin 后，无 notch 普通屏才进入 auto-hide 行为，已有用户保存过的 pin 选择继续保留。 |
+| 2026-04-28 | Usage | Day 视图除了看 token 峰值，也能看到当天真实和 Agent 协作的活跃时间分布。 | 新增独立的 Vibe Coding Time block，读取本地 session 中的用户消息、token_count、命令、patch、diff、collab 等活动事件时间戳，按相邻 10 分钟内归为 active block 的规则聚合到 24 小时，并显示当日总活跃时长；坐标轴对齐 token 图样式，hover 小时点时显示该小时活跃时长；Day 模式下 token 总量和 Vibe 总时长分别移动到各自图表标题行右侧。 |
+| 2026-04-28 | Usage | Usage 的 Year/Day 统计按用户本地时区归属，不再把 UTC 日界线附近的 token 误放到前一天或错误小时。 | `CodexCostScanner` 默认使用 `Calendar.autoupdatingCurrent`，Usage 日期显示使用 `TimeZone.autoupdatingCurrent`，cost 缓存记录聚合时区并在时区变化或旧缓存缺少时区时重新解析。 |
+| 2026-04-28 | 设置窗口 | Usage 页的 Day/Year 切换、年份/日期选择和 Total 汇总保持在同一操作行，更符合扫视习惯。 | Header 第一行只保留 `Daily Tokens`；第二行左侧放 Day/Year segmented control，中间居中放年份/日期切换，右侧放 `Total x Tokens`。 |
 | 2026-04-28 | 自动更新 | 开启 `Automatic Updates` 后，AgentBar 下载并校验新版本后会真正推进安装和重启，不再停在“等用户手动退出才安装”。 | 自动更新模式接管 Sparkle `willInstallUpdateOnQuit` 的 immediate installation block，在下载解包完成后立即触发安装流程；安装等待旧进程退出时短延迟重试终止请求，降低常驻小组件挂起更新的概率。 |
 | 2026-04-28 | About | About 页面现在显示当前版本、是否已是最新版本，并在可更新时提供直接触发更新的按钮。 | About 打开时通过 Sparkle probing check 刷新状态；按钮调用 Sparkle 用户触发更新检查，沿用现有下载、自动安装和手动确认流程。 |
 | 2026-04-27 | 设置窗口 | Usage 页可以在 Year 年度热力图和 Day 分时柱状图之间切换，既看长期趋势，也能按天查看小时级 token 峰值和模型构成。 | Usage header 新增原生 Day/Year segmented control，默认保持 Year 年度热力图；Year 汇总下移到年份切换同一行并简化为 `Total x Tokens`；Day 在同一位置提供日期左右切换，跨月/跨年按自然日处理，并读取所选日期 00-23 点 token 增量，右侧总量同样简化为 `Total x Tokens`；按当天实际出现的模型生成堆叠柱颜色和图例；小时柱 tooltip 只向上展开，堆叠柱只在最上方保留上圆角，窗口变窄时柱间距自动缩小，最窄可贴合。 |

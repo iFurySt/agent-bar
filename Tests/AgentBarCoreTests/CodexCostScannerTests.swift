@@ -200,6 +200,49 @@ final class CodexCostScannerTests: XCTestCase {
         XCTAssertEqual(usage.days.map(\.tokens), [0, 350])
     }
 
+    func testUsageRebucketsCachedEventsWhenLocalTimeZoneDiffersFromUTC() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let dayDir = root
+            .appendingPathComponent("2026", isDirectory: true)
+            .appendingPathComponent("04", isDirectory: true)
+            .appendingPathComponent("26", isDirectory: true)
+        try FileManager.default.createDirectory(at: dayDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let file = dayDir.appendingPathComponent("rollout-local-midnight.jsonl")
+        let lines = [
+            #"{"timestamp":"2026-04-25T16:00:00.000Z","type":"turn_context","payload":{"model":"gpt-5.4"}}"#,
+            #"{"timestamp":"2026-04-25T16:30:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":300,"cached_input_tokens":20,"output_tokens":50}}}}"#,
+        ].joined(separator: "\n")
+        try lines.write(to: file, atomically: true, encoding: .utf8)
+
+        let cacheStore = AgentBarCacheStore(fileURL: root.appendingPathComponent("cache.json"))
+        var utcCalendar = Calendar(identifier: .gregorian)
+        utcCalendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let utcScanner = CodexCostScanner(sessionsRoot: root, calendar: utcCalendar, cacheStore: cacheStore)
+        let now = CodexCostScanner.parseTimestamp("2026-04-26T04:00:00.000Z")!
+
+        let utcUsage = utcScanner.dailyTokenUsage(days: 2, now: now)
+        XCTAssertEqual(utcUsage.days.map(\.dayKey), ["2026-04-25", "2026-04-26"])
+        XCTAssertEqual(utcUsage.days.map(\.tokens), [350, 0])
+        XCTAssertEqual(cacheStore.load().costFiles.values.first?.timeZoneIdentifier, "GMT")
+
+        var localCalendar = Calendar(identifier: .gregorian)
+        localCalendar.timeZone = TimeZone(identifier: "Asia/Shanghai")!
+        let localScanner = CodexCostScanner(sessionsRoot: root, calendar: localCalendar, cacheStore: cacheStore)
+
+        let localDailyUsage = localScanner.dailyTokenUsage(days: 2, now: now)
+        let localHourlyUsage = localScanner.hourlyTokenUsage(on: now)
+
+        XCTAssertEqual(localDailyUsage.days.map(\.dayKey), ["2026-04-25", "2026-04-26"])
+        XCTAssertEqual(localDailyUsage.days.map(\.tokens), [0, 350])
+        XCTAssertEqual(localHourlyUsage.dayKey, "2026-04-26")
+        XCTAssertEqual(localHourlyUsage.hours[0].totalTokens, 350)
+        XCTAssertEqual(localHourlyUsage.hours[16].totalTokens, 0)
+        XCTAssertEqual(cacheStore.load().costFiles.values.first?.timeZoneIdentifier, "Asia/Shanghai")
+    }
+
     func testYearlyUsageReturnsCalendarYearDays() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)

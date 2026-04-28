@@ -89,7 +89,7 @@ public final class CodexCostScanner: @unchecked Sendable {
 
     public init(
         sessionsRoot: URL = CodexHome.url().appendingPathComponent("sessions", isDirectory: true),
-        calendar: Calendar = .current,
+        calendar: Calendar = .autoupdatingCurrent,
         cacheStore: AgentBarCacheStore? = .default)
     {
         self.sessionsRoot = sessionsRoot
@@ -246,12 +246,14 @@ public final class CodexCostScanner: @unchecked Sendable {
         let cache = cacheStore?.load() ?? .empty
         var updatedFiles: [String: CachedCostFile] = [:]
         var days: [String: TokenTotals] = [:]
+        let timeZoneIdentifier = calendar.timeZone.identifier
 
         for file in files {
             guard let metadata = CachedFileMetadata(fileURL: file) else { continue }
             let fileDays: [String: [String: TokenTotals]]
             if let cached = cache.costFiles[file.path],
                cached.metadata == metadata,
+               cached.timeZoneIdentifier == timeZoneIdentifier,
                !cached.needsPricingRefresh
             {
                 fileDays = cached.days
@@ -259,7 +261,11 @@ public final class CodexCostScanner: @unchecked Sendable {
             } else {
                 let parsed = parseFile(file)
                 fileDays = parsed.days
-                updatedFiles[file.path] = CachedCostFile(metadata: metadata, days: parsed.days, hours: parsed.hours)
+                updatedFiles[file.path] = CachedCostFile(
+                    metadata: metadata,
+                    days: parsed.days,
+                    hours: parsed.hours,
+                    timeZoneIdentifier: timeZoneIdentifier)
             }
 
             for (day, models) in fileDays where day >= sinceKey && day <= todayKey {
@@ -282,12 +288,14 @@ public final class CodexCostScanner: @unchecked Sendable {
         let cache = cacheStore?.load() ?? .empty
         var updatedFiles: [String: CachedCostFile] = [:]
         var hours: [String: [String: TokenTotals]] = [:]
+        let timeZoneIdentifier = calendar.timeZone.identifier
 
         for file in files {
             guard let metadata = CachedFileMetadata(fileURL: file) else { continue }
             let fileHours: [String: [String: [String: TokenTotals]]]
             if let cached = cache.costFiles[file.path],
                cached.metadata == metadata,
+               cached.timeZoneIdentifier == timeZoneIdentifier,
                !cached.needsPricingRefresh,
                let cachedHours = cached.hours
             {
@@ -296,7 +304,11 @@ public final class CodexCostScanner: @unchecked Sendable {
             } else {
                 let parsed = parseFile(file)
                 fileHours = parsed.hours
-                updatedFiles[file.path] = CachedCostFile(metadata: metadata, days: parsed.days, hours: parsed.hours)
+                updatedFiles[file.path] = CachedCostFile(
+                    metadata: metadata,
+                    days: parsed.days,
+                    hours: parsed.hours,
+                    timeZoneIdentifier: timeZoneIdentifier)
             }
 
             for (hour, models) in fileHours[dayKey] ?? [:] {
