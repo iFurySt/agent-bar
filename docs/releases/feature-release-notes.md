@@ -4,6 +4,7 @@
 
 | 日期 | 功能域 | 用户价值 | 变更摘要 |
 | --- | --- | --- | --- |
+| 2026-04-29 | Usage | 快速切换 Day/Year 或连续翻日期时，Usage 不再反复重算旧数据，也不会被较慢返回的中间日期结果回滚。 | Usage 视图级结果写入 `~/.agentbar/cache.json`，过去日期/年份直接复用缓存；今天和当前年使用短时缓存；设置页只刷新当前可见视图，并用 debounce、任务取消和刷新序号保证最后一次选择才能写回图表。 |
 | 2026-04-28 | 多屏体验 | 新用户安装并启动后能立刻看到 AgentBar 已经运行，减少“应用是不是没打开”的困惑。 | `AgentBar.pinnedOpen` 缺省值改为 pinned open；只有用户主动取消 pin 后，无 notch 普通屏才进入 auto-hide 行为，已有用户保存过的 pin 选择继续保留。 |
 | 2026-04-28 | Usage | Day 视图除了看 token 峰值，也能看到当天真实和 Agent 协作的活跃时间分布。 | 新增独立的 Vibe Coding Time block，读取本地 session 中的用户消息、token_count、命令、patch、diff、collab 等活动事件时间戳，按相邻 10 分钟内归为 active block 的规则聚合到 24 小时，并显示当日总活跃时长；坐标轴对齐 token 图样式，hover 小时点时显示该小时活跃时长；Day 模式下 token 总量和 Vibe 总时长分别移动到各自图表标题行右侧。 |
 | 2026-04-28 | Usage | Usage 的 Year/Day 统计按用户本地时区归属，不再把 UTC 日界线附近的 token 误放到前一天或错误小时。 | `CodexCostScanner` 默认使用 `Calendar.autoupdatingCurrent`，Usage 日期显示使用 `TimeZone.autoupdatingCurrent`，cost 缓存记录聚合时区并在时区变化或旧缓存缺少时区时重新解析。 |

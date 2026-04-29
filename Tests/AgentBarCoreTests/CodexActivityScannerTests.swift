@@ -24,7 +24,8 @@ final class CodexActivityScannerTests: XCTestCase {
 
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!
-        let scanner = CodexActivityScanner(sessionsRoot: root, calendar: calendar)
+        let cacheStore = AgentBarCacheStore(fileURL: root.appendingPathComponent("cache.json"))
+        let scanner = CodexActivityScanner(sessionsRoot: root, calendar: calendar, cacheStore: cacheStore)
         let day = CodexCostScanner.parseTimestamp("2026-04-25T12:00:00.000Z")!
 
         let usage = scanner.hourlyActivityUsage(on: day)
@@ -35,5 +36,43 @@ final class CodexActivityScannerTests: XCTestCase {
         XCTAssertEqual(usage.hours[9].minutes, 10, accuracy: 0.001)
         XCTAssertEqual(usage.totalMinutes, 20, accuracy: 0.001)
         XCTAssertEqual(usage.maxHourlyMinutes, 10, accuracy: 0.001)
+    }
+
+    func testPastHourlyActivityUsageReusesPersistedUsageSnapshot() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let dayDir = root
+            .appendingPathComponent("2026", isDirectory: true)
+            .appendingPathComponent("04", isDirectory: true)
+            .appendingPathComponent("25", isDirectory: true)
+        try FileManager.default.createDirectory(at: dayDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let file = dayDir.appendingPathComponent("rollout-activity-cache.jsonl")
+        let original = [
+            #"{"timestamp":"2026-04-25T08:50:00.000Z","type":"response_item","payload":{"item":{"role":"user"}}}"#,
+            #"{"timestamp":"2026-04-25T08:55:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":100,"output_tokens":50}}}}"#,
+            #"{"timestamp":"2026-04-25T09:10:00.000Z","type":"event_msg","payload":{"type":"exec_command_end","duration":420,"exit_code":0}}"#,
+        ].joined(separator: "\n")
+        try original.write(to: file, atomically: true, encoding: .utf8)
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let cacheStore = AgentBarCacheStore(fileURL: root.appendingPathComponent("cache.json"))
+        let scanner = CodexActivityScanner(sessionsRoot: root, calendar: calendar, cacheStore: cacheStore)
+        let day = CodexCostScanner.parseTimestamp("2026-04-25T12:00:00.000Z")!
+        let now = CodexCostScanner.parseTimestamp("2026-04-26T12:00:00.000Z")!
+
+        XCTAssertEqual(scanner.hourlyActivityUsage(on: day, now: now).totalMinutes, 20, accuracy: 0.001)
+
+        let modified = [
+            original,
+            #"{"timestamp":"2026-04-25T11:00:00.000Z","type":"response_item","payload":{"item":{"role":"user"}}}"#,
+            #"{"timestamp":"2026-04-25T11:20:00.000Z","type":"event_msg","payload":{"type":"exec_command_end","duration":600,"exit_code":0}}"#,
+        ].joined(separator: "\n")
+        try modified.write(to: file, atomically: true, encoding: .utf8)
+
+        XCTAssertEqual(scanner.hourlyActivityUsage(on: day, now: now).totalMinutes, 20, accuracy: 0.001)
+        XCTAssertEqual(cacheStore.load().hourlyActivityUsage?.count, 1)
     }
 }

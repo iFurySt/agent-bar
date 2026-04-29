@@ -274,6 +274,35 @@ final class CodexCostScannerTests: XCTestCase {
         XCTAssertEqual(scanner.usageYearRange(now: now), 2026...2026)
     }
 
+    func testPastYearlyUsageReusesPersistedUsageSnapshot() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let dayDir = root
+            .appendingPathComponent("2026", isDirectory: true)
+            .appendingPathComponent("04", isDirectory: true)
+            .appendingPathComponent("25", isDirectory: true)
+        try FileManager.default.createDirectory(at: dayDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let file = dayDir.appendingPathComponent("rollout-year-cache.jsonl")
+        let original = #"{"timestamp":"2026-04-25T02:00:01.000Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":300,"cached_input_tokens":20,"output_tokens":50}}}}"#
+        try original.write(to: file, atomically: true, encoding: .utf8)
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let cacheStore = AgentBarCacheStore(fileURL: root.appendingPathComponent("cache.json"))
+        let scanner = CodexCostScanner(sessionsRoot: root, calendar: calendar, cacheStore: cacheStore)
+        let now = CodexCostScanner.parseTimestamp("2027-01-02T12:00:00.000Z")!
+
+        XCTAssertEqual(scanner.yearlyTokenUsage(year: 2026, now: now).totalTokens, 350)
+
+        let modified = #"{"timestamp":"2026-04-25T02:00:01.000Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":600,"cached_input_tokens":20,"output_tokens":100}}}}"#
+        try modified.write(to: file, atomically: true, encoding: .utf8)
+
+        XCTAssertEqual(scanner.yearlyTokenUsage(year: 2026, now: now).totalTokens, 350)
+        XCTAssertEqual(cacheStore.load().yearlyTokenUsage?.count, 1)
+    }
+
     func testHourlyUsageSplitsTodayByHourAndModel() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -312,5 +341,35 @@ final class CodexCostScannerTests: XCTestCase {
         XCTAssertEqual(usage.hours[9].totalTokens, 350)
         XCTAssertEqual(usage.totalTokens, 1_450)
         XCTAssertEqual(usage.maxHourlyTokens, 1_100)
+    }
+
+    func testPastHourlyUsageReusesPersistedUsageSnapshot() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let dayDir = root
+            .appendingPathComponent("2026", isDirectory: true)
+            .appendingPathComponent("04", isDirectory: true)
+            .appendingPathComponent("25", isDirectory: true)
+        try FileManager.default.createDirectory(at: dayDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let file = dayDir.appendingPathComponent("rollout-hourly-cache.jsonl")
+        let original = #"{"timestamp":"2026-04-25T08:10:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":1000,"cached_input_tokens":100,"output_tokens":100}}}}"#
+        try original.write(to: file, atomically: true, encoding: .utf8)
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let cacheStore = AgentBarCacheStore(fileURL: root.appendingPathComponent("cache.json"))
+        let scanner = CodexCostScanner(sessionsRoot: root, calendar: calendar, cacheStore: cacheStore)
+        let day = CodexCostScanner.parseTimestamp("2026-04-25T12:00:00.000Z")!
+        let now = CodexCostScanner.parseTimestamp("2026-04-26T12:00:00.000Z")!
+
+        XCTAssertEqual(scanner.hourlyTokenUsage(on: day, now: now).totalTokens, 1_100)
+
+        let modified = #"{"timestamp":"2026-04-25T08:10:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":2000,"cached_input_tokens":100,"output_tokens":200}}}}"#
+        try modified.write(to: file, atomically: true, encoding: .utf8)
+
+        XCTAssertEqual(scanner.hourlyTokenUsage(on: day, now: now).totalTokens, 1_100)
+        XCTAssertEqual(cacheStore.load().hourlyTokenUsage?.count, 1)
     }
 }

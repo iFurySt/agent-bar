@@ -140,6 +140,8 @@ final class AgentBarSettingsViewController: NSViewController {
     private var selectedUsageDay = usageCalendar.startOfDay(for: Date())
     private var selectedUsageYear = usageCalendar.component(.year, from: Date())
     private var usageYearRange = usageCalendar.component(.year, from: Date())...usageCalendar.component(.year, from: Date())
+    private var usageRefreshGeneration = 0
+    private var usageRefreshTask: Task<Void, Never>?
     private let usageDayFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
@@ -669,26 +671,48 @@ final class AgentBarSettingsViewController: NSViewController {
     }
 
     private func refreshUsage() {
-        let scanner = CodexCostScanner()
-        let activityScanner = CodexActivityScanner()
+        usageRefreshGeneration += 1
+        let generation = usageRefreshGeneration
+        let mode = usageViewMode
         let year = selectedUsageYear
         let day = selectedUsageDay
-        let task = Task.detached(priority: .utility) {
-            (
-                scanner.yearlyTokenUsage(year: year),
-                scanner.usageYearRange(),
-                scanner.hourlyTokenUsage(on: day),
-                activityScanner.hourlyActivityUsage(on: day))
-        }
-        Task { [weak self] in
-            let (snapshot, yearRange, hourlySnapshot, activitySnapshot) = await task.value
-            self?.applyUsage(
-                snapshot,
-                yearRange: yearRange,
-                year: year,
-                day: day,
-                hourlySnapshot: hourlySnapshot,
-                activitySnapshot: activitySnapshot)
+        usageRefreshTask?.cancel()
+        switch mode {
+        case .year:
+            usageRefreshTask = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 120_000_000)
+                guard !Task.isCancelled else { return }
+                let scanner = CodexCostScanner()
+                let task = Task.detached(priority: .utility) {
+                    (scanner.yearlyTokenUsage(year: year), scanner.usageYearRange())
+                }
+                let (snapshot, yearRange) = await task.value
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    self?.applyYearUsage(snapshot, yearRange: yearRange, year: year, generation: generation)
+                }
+            }
+        case .day:
+            usageRefreshTask = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 120_000_000)
+                guard !Task.isCancelled else { return }
+                let scanner = CodexCostScanner()
+                let activityScanner = CodexActivityScanner()
+                let task = Task.detached(priority: .utility) {
+                    (
+                        scanner.hourlyTokenUsage(on: day),
+                        activityScanner.hourlyActivityUsage(on: day))
+                }
+                let (hourlySnapshot, activitySnapshot) = await task.value
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    self?.applyDayUsage(
+                        day: day,
+                        hourlySnapshot: hourlySnapshot,
+                        activitySnapshot: activitySnapshot,
+                        generation: generation)
+                }
+            }
         }
     }
 
@@ -704,26 +728,49 @@ final class AgentBarSettingsViewController: NSViewController {
         updateContentBottomConstraint(for: selectedPage)
     }
 
-    private func applyUsage(
+    private func applyYearUsage(
         _ snapshot: CodexDailyTokenUsageSnapshot,
         yearRange: ClosedRange<Int>,
         year: Int,
-        day: Date,
-        hourlySnapshot: CodexHourlyTokenUsageSnapshot,
-        activitySnapshot: CodexActivityUsageSnapshot)
+        generation: Int)
     {
+        guard isCurrentUsageRefresh(generation: generation, mode: .year, year: year) else { return }
         usageYearRange = yearRange
         selectedUsageYear = min(max(year, yearRange.lowerBound), yearRange.upperBound)
-        selectedUsageDay = Self.usageCalendar.startOfDay(for: day)
         usageHeatmapView.snapshot = snapshot
-        usageDayChartView.snapshot = hourlySnapshot
-        usageVibeChartView.snapshot = activitySnapshot
         usageYearLabel.stringValue = "\(selectedUsageYear)"
         usagePreviousYearButton.isEnabled = selectedUsageYear > usageYearRange.lowerBound
         usageNextYearButton.isEnabled = selectedUsageYear < usageYearRange.upperBound
         updateUsageDayControls()
         updateUsageSummaryLabel()
         updateUsageModeVisibility()
+    }
+
+    private func applyDayUsage(
+        day: Date,
+        hourlySnapshot: CodexHourlyTokenUsageSnapshot,
+        activitySnapshot: CodexActivityUsageSnapshot,
+        generation: Int)
+    {
+        guard isCurrentUsageRefresh(generation: generation, mode: .day, day: day) else { return }
+        selectedUsageDay = Self.usageCalendar.startOfDay(for: day)
+        usageDayChartView.snapshot = hourlySnapshot
+        usageVibeChartView.snapshot = activitySnapshot
+        updateUsageDayControls()
+        updateUsageSummaryLabel()
+        updateUsageModeVisibility()
+    }
+
+    private func isCurrentUsageRefresh(
+        generation: Int,
+        mode: UsageViewMode,
+        day: Date? = nil,
+        year: Int? = nil) -> Bool
+    {
+        guard usageRefreshGeneration == generation, usageViewMode == mode else { return false }
+        if let day, Self.usageCalendar.startOfDay(for: day) != selectedUsageDay { return false }
+        if let year, year != selectedUsageYear { return false }
+        return true
     }
 
     @objc private func previousUsageDay() {
@@ -862,6 +909,7 @@ final class AgentBarSettingsViewController: NSViewController {
         guard let mode = UsageViewMode(rawValue: sender.selectedSegment), usageViewMode != mode else { return }
         usageViewMode = mode
         updateUsageModeVisibility()
+        refreshUsage()
     }
 
     @objc private func openGitHub() {

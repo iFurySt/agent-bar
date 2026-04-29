@@ -7,8 +7,8 @@
 - 顶部浮窗每 60 秒刷新一次。
 - 启动时先读取 `~/.agentbar/cache.json` 里的最后一次完整快照，避免空白或长时间 `--%`。
 - Codex usage API 读取失败时，使用最近 session 中的 rate limit 事件兜底。
-- 本地 cost 扫描默认读取最近约 30 天 `~/.codex/sessions/YYYY/MM/DD/*.jsonl`；设置页 Usage 按所选年份读取 Jan-Dec，Day 视图按用户本地时区选中的自然日读取 00-23 点 token，并用独立 activity scanner 从本地活动事件时间戳计算 Vibe Coding Time，二者都会补捞最近修改过的旧日期目录文件。
-- token/cost 缓存按 session 文件的 size/mtime 和聚合时区复用，未变化且时区一致的文件不会重复解析；日级和小时级 Usage 直接复用同一份 `~/.agentbar/cache.json` 聚合。
+- 本地 cost 扫描默认读取最近约 30 天 `~/.codex/sessions/YYYY/MM/DD/*.jsonl`；设置页 Usage 只刷新当前可见的 Day 或 Year 视图，Year 按所选年份读取 Jan-Dec，Day 按用户本地时区选中的自然日读取 00-23 点 token，并用独立 activity scanner 从本地活动事件时间戳计算 Vibe Coding Time，二者都会补捞最近修改过的旧日期目录文件。Usage 日期/年份切换使用短 debounce 和 latest-wins 刷新序号，快速连续点击时旧请求不会把图表回滚到中间日期。
+- token/cost 缓存按 session 文件的 size/mtime 和聚合时区复用，未变化且时区一致的文件不会重复解析；Usage 的 Year 日级 snapshot、Day 小时级 token snapshot 和 Day Vibe Coding Time snapshot 直接写入同一份 `~/.agentbar/cache.json`。过去日期和过去年份视为稳定数据，快速切换时直接复用；今天和当前年保留短时缓存，避免同一轮交互重复扫描。
 - 每轮刷新按 session 文件 size/mtime 复用缓存，只重算新增或更新过的文件。
 - cost/token 和 Vibe Coding Time 扫描在后台任务中运行，避免阻塞 AppKit 主线程。
 - 后台刷新保持静默，不显示状态点，避免快速刷新时造成视觉闪烁。

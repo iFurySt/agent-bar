@@ -62,7 +62,7 @@ public final class AgentBarCacheStore: @unchecked Sendable {
 }
 
 public struct AgentBarCache: Codable, Equatable, Sendable {
-    static let currentVersion = 2
+    static let currentVersion = 3
     static let supportedVersions: Set<Int> = [2, 3]
     static let empty = AgentBarCache(version: currentVersion)
 
@@ -70,6 +70,9 @@ public struct AgentBarCache: Codable, Equatable, Sendable {
     var latestSnapshot: CachedAgentBarSnapshot?
     var rateLimitFiles: [String: CachedRateLimitFile] = [:]
     var costFiles: [String: CachedCostFile] = [:]
+    var yearlyTokenUsage: [String: CachedYearlyTokenUsage]?
+    var hourlyTokenUsage: [String: CachedHourlyTokenUsage]?
+    var hourlyActivityUsage: [String: CachedHourlyActivityUsage]?
 }
 
 struct CachedAgentBarSnapshot: Codable, Equatable, Sendable {
@@ -128,6 +131,39 @@ struct CachedCostFile: Codable, Equatable, Sendable {
                 model == "gpt-5.5" && totals.totalTokens > 0 && totals.costUSD == 0
             }
         }
+    }
+}
+
+struct CachedYearlyTokenUsage: Codable, Equatable, Sendable {
+    let year: Int
+    let timeZoneIdentifier: String
+    let snapshot: CodexDailyTokenUsageSnapshot
+    let updatedAt: Date
+
+    var isFresh: Bool {
+        Date().timeIntervalSince(updatedAt) < 30
+    }
+}
+
+struct CachedHourlyTokenUsage: Codable, Equatable, Sendable {
+    let dayKey: String
+    let timeZoneIdentifier: String
+    let snapshot: CodexHourlyTokenUsageSnapshot
+    let updatedAt: Date
+
+    var isFresh: Bool {
+        Date().timeIntervalSince(updatedAt) < 30
+    }
+}
+
+struct CachedHourlyActivityUsage: Codable, Equatable, Sendable {
+    let dayKey: String
+    let timeZoneIdentifier: String
+    let snapshot: CodexActivityUsageSnapshot
+    let updatedAt: Date
+
+    var isFresh: Bool {
+        Date().timeIntervalSince(updatedAt) < 30
     }
 }
 

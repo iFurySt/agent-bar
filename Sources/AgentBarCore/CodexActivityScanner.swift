@@ -1,6 +1,6 @@
 import Foundation
 
-public struct CodexActivityHourUsage: Equatable, Sendable {
+public struct CodexActivityHourUsage: Codable, Equatable, Sendable {
     public let hour: Int
     public let minutes: Double
 
@@ -10,7 +10,7 @@ public struct CodexActivityHourUsage: Equatable, Sendable {
     }
 }
 
-public struct CodexActivityUsageSnapshot: Equatable, Sendable {
+public struct CodexActivityUsageSnapshot: Codable, Equatable, Sendable {
     public let day: Date
     public let dayKey: String
     public let hours: [CodexActivityHourUsage]
@@ -31,19 +31,32 @@ public final class CodexActivityScanner: @unchecked Sendable {
 
     private let sessionsRoot: URL
     private let calendar: Calendar
+    private let cacheStore: AgentBarCacheStore?
 
     public init(
         sessionsRoot: URL = CodexHome.url().appendingPathComponent("sessions", isDirectory: true),
-        calendar: Calendar = .autoupdatingCurrent)
+        calendar: Calendar = .autoupdatingCurrent,
+        cacheStore: AgentBarCacheStore? = .default)
     {
         self.sessionsRoot = sessionsRoot
         self.calendar = calendar
+        self.cacheStore = cacheStore
     }
 
-    public func hourlyActivityUsage(on date: Date = Date()) -> CodexActivityUsageSnapshot {
+    public func hourlyActivityUsage(on date: Date = Date(), now: Date = Date()) -> CodexActivityUsageSnapshot {
         let dayStart = calendar.startOfDay(for: date)
         let dayEnd = calendar.date(byAdding: .day, value: 1, to: dayStart) ?? dayStart.addingTimeInterval(86_400)
         let dayKey = CodexCostScanner.dayKey(for: dayStart, calendar: calendar)
+        let timeZoneIdentifier = calendar.timeZone.identifier
+        let cacheKey = CodexCostScanner.usageCacheKey(timeZoneIdentifier: timeZoneIdentifier, value: dayKey)
+        if let cached = cacheStore?.load().hourlyActivityUsage?[cacheKey],
+           cached.dayKey == dayKey,
+           cached.timeZoneIdentifier == timeZoneIdentifier,
+           (dayStart < calendar.startOfDay(for: now) || cached.isFresh)
+        {
+            return cached.snapshot
+        }
+
         let files = sessionFiles(since: dayStart, through: dayStart)
         let intervals = files.flatMap { parseActivityIntervals(in: $0, matching: dayKey) }
         let blocks = activeBlocks(from: intervals)
@@ -51,7 +64,17 @@ public final class CodexActivityScanner: @unchecked Sendable {
         let hours = (0..<24).map { hour in
             CodexActivityHourUsage(hour: hour, minutes: minutesByHour[hour])
         }
-        return CodexActivityUsageSnapshot(day: dayStart, dayKey: dayKey, hours: hours)
+        let snapshot = CodexActivityUsageSnapshot(day: dayStart, dayKey: dayKey, hours: hours)
+        cacheStore?.update { cache in
+            var hourlyActivityUsage = cache.hourlyActivityUsage ?? [:]
+            hourlyActivityUsage[cacheKey] = CachedHourlyActivityUsage(
+                dayKey: dayKey,
+                timeZoneIdentifier: timeZoneIdentifier,
+                snapshot: snapshot,
+                updatedAt: Date())
+            cache.hourlyActivityUsage = hourlyActivityUsage
+        }
+        return snapshot
     }
 
     private func activeBlocks(from intervals: [ActivityInterval]) -> [ActivityInterval] {

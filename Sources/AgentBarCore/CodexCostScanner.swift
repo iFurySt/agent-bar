@@ -14,7 +14,7 @@ public struct CodexCostSnapshot: Codable, Equatable, Sendable {
     }
 }
 
-public struct CodexDailyTokenUsage: Equatable, Sendable {
+public struct CodexDailyTokenUsage: Codable, Equatable, Sendable {
     public let day: Date
     public let dayKey: String
     public let tokens: Int
@@ -28,7 +28,7 @@ public struct CodexDailyTokenUsage: Equatable, Sendable {
     }
 }
 
-public struct CodexDailyTokenUsageSnapshot: Equatable, Sendable {
+public struct CodexDailyTokenUsageSnapshot: Codable, Equatable, Sendable {
     public let days: [CodexDailyTokenUsage]
     public let totalTokens: Int
     public let maxDailyTokens: Int
@@ -40,7 +40,7 @@ public struct CodexDailyTokenUsageSnapshot: Equatable, Sendable {
     }
 }
 
-public struct CodexHourlyModelTokenUsage: Equatable, Sendable {
+public struct CodexHourlyModelTokenUsage: Codable, Equatable, Sendable {
     public let model: String
     public let tokens: Int
     public let costUSD: Double
@@ -52,7 +52,7 @@ public struct CodexHourlyModelTokenUsage: Equatable, Sendable {
     }
 }
 
-public struct CodexHourlyTokenUsage: Equatable, Sendable {
+public struct CodexHourlyTokenUsage: Codable, Equatable, Sendable {
     public let hour: Int
     public let models: [CodexHourlyModelTokenUsage]
     public let totalTokens: Int
@@ -66,7 +66,7 @@ public struct CodexHourlyTokenUsage: Equatable, Sendable {
     }
 }
 
-public struct CodexHourlyTokenUsageSnapshot: Equatable, Sendable {
+public struct CodexHourlyTokenUsageSnapshot: Codable, Equatable, Sendable {
     public let day: Date
     public let dayKey: String
     public let hours: [CodexHourlyTokenUsage]
@@ -146,6 +146,17 @@ public final class CodexCostScanner: @unchecked Sendable {
     }
 
     public func yearlyTokenUsage(year: Int, now: Date = Date()) -> CodexDailyTokenUsageSnapshot {
+        let timeZoneIdentifier = calendar.timeZone.identifier
+        let currentYear = calendar.component(.year, from: now)
+        let cacheKey = Self.usageCacheKey(timeZoneIdentifier: timeZoneIdentifier, value: "\(year)")
+        if let cached = cacheStore?.load().yearlyTokenUsage?[cacheKey],
+           cached.year == year,
+           cached.timeZoneIdentifier == timeZoneIdentifier,
+           (year < currentYear || cached.isFresh)
+        {
+            return cached.snapshot
+        }
+
         var startComponents = DateComponents()
         startComponents.year = year
         startComponents.month = 1
@@ -180,12 +191,32 @@ public final class CodexCostScanner: @unchecked Sendable {
             day = next
         }
 
-        return CodexDailyTokenUsageSnapshot(days: entries)
+        let snapshot = CodexDailyTokenUsageSnapshot(days: entries)
+        cacheStore?.update { cache in
+            var yearlyTokenUsage = cache.yearlyTokenUsage ?? [:]
+            yearlyTokenUsage[cacheKey] = CachedYearlyTokenUsage(
+                year: year,
+                timeZoneIdentifier: timeZoneIdentifier,
+                snapshot: snapshot,
+                updatedAt: Date())
+            cache.yearlyTokenUsage = yearlyTokenUsage
+        }
+        return snapshot
     }
 
-    public func hourlyTokenUsage(on date: Date = Date()) -> CodexHourlyTokenUsageSnapshot {
+    public func hourlyTokenUsage(on date: Date = Date(), now: Date = Date()) -> CodexHourlyTokenUsageSnapshot {
         let dayStart = calendar.startOfDay(for: date)
         let dayKey = Self.dayKey(for: dayStart, calendar: calendar)
+        let timeZoneIdentifier = calendar.timeZone.identifier
+        let cacheKey = Self.usageCacheKey(timeZoneIdentifier: timeZoneIdentifier, value: dayKey)
+        if let cached = cacheStore?.load().hourlyTokenUsage?[cacheKey],
+           cached.dayKey == dayKey,
+           cached.timeZoneIdentifier == timeZoneIdentifier,
+           (dayStart < calendar.startOfDay(for: now) || cached.isFresh)
+        {
+            return cached.snapshot
+        }
+
         let files = sessionFiles(since: dayStart, through: dayStart)
         let totalsByHour = scanHours(files: files, dayKey: dayKey)
         let modelOrder = ["gpt-5.5", "gpt-5.4", "claude-3.7-sonnet", "gemini-1.5-pro"]
@@ -206,7 +237,17 @@ public final class CodexCostScanner: @unchecked Sendable {
             return CodexHourlyTokenUsage(hour: hour, models: entries)
         }
 
-        return CodexHourlyTokenUsageSnapshot(day: dayStart, dayKey: dayKey, hours: hours)
+        let snapshot = CodexHourlyTokenUsageSnapshot(day: dayStart, dayKey: dayKey, hours: hours)
+        cacheStore?.update { cache in
+            var hourlyTokenUsage = cache.hourlyTokenUsage ?? [:]
+            hourlyTokenUsage[cacheKey] = CachedHourlyTokenUsage(
+                dayKey: dayKey,
+                timeZoneIdentifier: timeZoneIdentifier,
+                snapshot: snapshot,
+                updatedAt: Date())
+            cache.hourlyTokenUsage = hourlyTokenUsage
+        }
+        return snapshot
     }
 
     public func usageYearRange(now: Date = Date()) -> ClosedRange<Int> {
@@ -476,6 +517,10 @@ public final class CodexCostScanner: @unchecked Sendable {
 
     static func hourKey(_ hour: Int) -> String {
         String(format: "%02d", max(0, min(23, hour)))
+    }
+
+    static func usageCacheKey(timeZoneIdentifier: String, value: String) -> String {
+        "\(timeZoneIdentifier)|\(value)"
     }
 }
 
