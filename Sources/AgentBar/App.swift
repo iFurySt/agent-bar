@@ -252,11 +252,11 @@ final class IslandWindowController {
         let screen = overlay.screen
         let topBarHeight = screen.agentBarTopBarHeight
         if let notchFrame = screen.agentBarNotchFrame {
-            overlay.panel.level = .screenSaver
+            overlay.panel.level = overlay.autoHideEligible ? .screenSaver : .statusBar
             overlay.view.configure(.notch(
                 height: max(topBarHeight, notchFrame.height),
                 gapWidth: notchFrame.width,
-                showsPin: false,
+                showsPin: overlay.autoHideEligible,
                 showsSettings: true))
 
             let maxWidth = min(max(320, notchFrame.width + 240), screen.frame.width - 80)
@@ -267,7 +267,9 @@ final class IslandWindowController {
             let y = screen.frame.maxY - height
             let frame = NSRect(x: x, y: y, width: width, height: height)
             overlay.visibleFrame = frame
-            return frame
+
+            guard overlay.isCollapsed else { return frame }
+            return NSRect(x: x, y: screen.frame.maxY, width: width, height: height)
         }
 
         overlay.panel.level = overlay.autoHideEligible ? .screenSaver : .statusBar
@@ -2103,7 +2105,7 @@ private extension NSScreen {
     }
 
     var agentBarSupportsAutoHide: Bool {
-        agentBarNotchFrame == nil
+        true
     }
 }
 
