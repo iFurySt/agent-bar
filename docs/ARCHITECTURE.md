@@ -27,10 +27,13 @@ Code 的 5h/weekly 配额（只读、单账号）。
     `Claude Code-credentials`（`ClaudeAuthStore`，用 `#if canImport(Security)` 包住以保持 `AgentBarCore`
     在 Linux CI 上可编译）；`accessToken` 临近过期或请求失败时用 `ClaudeTokenRefresher` 调用
     `platform.claude.com/v1/oauth/token` 刷新并写回原凭据来源。拿到 token 后调用 Anthropic
-    `GET /api/oauth/usage`，把 `five_hour`/`seven_day` 两个窗口的 `utilization` 换算成 remaining percent
-    存进 `AgentBarSnapshot.claudeRateLimits`，随 Codex 快照一起写入 `~/.agentbar/cache.json`。这是单账号
-    只读展示：本机没有 Claude Code 凭据时 `claudeRateLimits` 为 nil，展开面板里的 `ClaudeQuotaView`
-    整块不渲染，不进入错误态；不做账号切换、也不扫描 Claude Code 本地 session 的 token/cost。
+    `GET /api/oauth/usage`，把 `five_hour`/`seven_day` 两个窗口的 `utilization` 换算成 remaining percent、
+    `resets_at` 换算成 reset 倒计时，再把凭据里的 `subscriptionType`（`pro`/`max`/`team`/... ）映射成大写
+    plan 标签，一起存进 `AgentBarSnapshot.claudeRateLimits`，随 Codex 快照一起写入 `~/.agentbar/cache.json`。
+    这是单账号只读展示：本机没有 Claude Code 凭据时 `claudeRateLimits` 为 nil，展开面板里的
+    `ClaudeQuotaView` 整块不渲染，不进入错误态；不做账号切换、也不扫描 Claude Code 本地 session 的
+    token/cost。`ClaudeQuotaView` 的 plan 徽章、reset 倒计时和百分比进度条渲染复用和 Codex 账号卡片
+    （`AccountBlocksView`）同一套 `AgentBarQuotaMetrics` 绘制辅助函数，避免两处重复实现。
 
 ## 边界
 

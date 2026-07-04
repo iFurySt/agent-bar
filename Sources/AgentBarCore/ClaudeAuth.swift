@@ -10,6 +10,7 @@ struct ClaudeAuthCredentials: Equatable, Sendable {
     let accessToken: String
     let refreshToken: String
     let expiresAt: Date?
+    let subscriptionType: String?
     let source: ClaudeCredentialSource
 
     var needsRefresh: Bool {
@@ -72,6 +73,7 @@ enum ClaudeAuthStore {
             accessToken: accessToken,
             refreshToken: oauth["refreshToken"] as? String ?? "",
             expiresAt: (oauth["expiresAt"] as? NSNumber).map { Date(timeIntervalSince1970: $0.doubleValue / 1000) },
+            subscriptionType: oauth["subscriptionType"] as? String,
             source: source)
     }
 
@@ -82,6 +84,9 @@ enum ClaudeAuthStore {
         ]
         if let expiresAt = credentials.expiresAt {
             oauth["expiresAt"] = Int64(expiresAt.timeIntervalSince1970 * 1000)
+        }
+        if let subscriptionType = credentials.subscriptionType {
+            oauth["subscriptionType"] = subscriptionType
         }
         let json: [String: Any] = ["claudeAiOauth": oauth]
         return (try? JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys])) ?? Data()
@@ -154,6 +159,7 @@ enum ClaudeTokenRefresher {
             accessToken: accessToken,
             refreshToken: json["refresh_token"] as? String ?? credentials.refreshToken,
             expiresAt: expiresAt,
+            subscriptionType: credentials.subscriptionType,
             source: credentials.source)
     }
 }

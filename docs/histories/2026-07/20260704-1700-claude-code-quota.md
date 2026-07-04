@@ -55,3 +55,44 @@
 - `Tests/AgentBarCoreTests/ClaudeAuthTests.swift`（新增）
 - `docs/ARCHITECTURE.md`
 - `docs/exec-plans/active/claude-code-quota.md`（新增，待归档到 `completed/`）
+
+## [2026-07-04 22:10] | Task: 补充 reset 倒计时和 plan 徽章（v0.1.20 发布后的用户反馈）
+
+### 📥 User Query
+
+> v0.1.20 发布后看实际效果，发现 Claude Code 配额卡片缺少 reset 时间，而且账号旁边应该像 Codex 一样带上
+> PRO 之类的账号等级标签。
+
+### 🛠 Changes Overview
+
+- `ClaudeAuthCredentials` 新增 `subscriptionType` 字段（解析自 Keychain/文件里的
+  `claudeAiOauth.subscriptionType`），刷新 token 时透传保留。
+- `ClaudeUsageResponse.Window` 新增 `resets_at` 字段解析（ISO8601，带微秒和 `+00:00` 时区偏移，用
+  `withFractionalSeconds` 兜底再退化到无小数秒解析）；`ClaudeRateLimitSnapshot` 新增
+  `fiveHourResetAt`/`weeklyResetAt`/`plan`，`plan` 由 `subscriptionType` 映射成大写标签（`pro` → `PRO`，
+  `max` → `MAX`，等等，未知值退化成大写下划线转空格）。
+- 把 `AccountBlocksView`（Codex）和 `ClaudeQuotaView`（Claude Code）里三份几乎一样的 chip / metric row /
+  countdown / percentColor 绘制代码收敛成共享的 `AgentBarQuotaMetrics` enum，两边都改成调用它，不再各自
+  维护一份。
+- `ClaudeQuotaView` 标题行加回 plan 徽章（复用 Codex 同款蓝色 chip 样式），5h/7d 行加回 `resets Xh Ym`
+  文本。
+- 新增/更新测试：`ClaudeAuthTests.testParsesCredentialsFileFormat` 断言 `subscriptionType`；
+  `ClaudeUsageClientTests` 新增 `testPlanLabelMapsKnownSubscriptionTiers`，`testDecodesUsageResponseSnakeCaseWindows`
+  补充 `resets_at` 断言。
+- 验证：用独立编译的 AppKit 脚本把 `ClaudeQuotaView.draw` 渲染成 PNG 检查视觉效果（PRO 徽章 + reset 倒计时
+  和 Codex 账号卡片布局一致），未直接操作用户正在运行的 AgentBar.app。
+
+### 🧠 Design Intent (Why)
+
+- 用户是拿 Codex 账号卡片截图对比着提的需求，目标就是让 Claude Code 卡片在信息密度上向 Codex 账号卡片
+  看齐，而不是发明新样式。
+- 三份重复的绘制代码已经出现在两个不同的 view 里，继续复制会变成第三份，这次顺手抽成共享 helper。
+
+### 📁 Files Modified
+
+- `Sources/AgentBarCore/ClaudeAuth.swift`
+- `Sources/AgentBarCore/ClaudeUsageClient.swift`
+- `Sources/AgentBar/App.swift`
+- `Tests/AgentBarCoreTests/ClaudeAuthTests.swift`
+- `docs/ARCHITECTURE.md`
+- `docs/releases/feature-release-notes.md`

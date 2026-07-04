@@ -6,10 +6,22 @@ import FoundationNetworking
 public struct ClaudeRateLimitSnapshot: Codable, Equatable, Sendable {
     public let fiveHourRemainingPercent: Int?
     public let weeklyRemainingPercent: Int?
+    public let fiveHourResetAt: Date?
+    public let weeklyResetAt: Date?
+    public let plan: String?
 
-    public init(fiveHourRemainingPercent: Int?, weeklyRemainingPercent: Int?) {
+    public init(
+        fiveHourRemainingPercent: Int?,
+        weeklyRemainingPercent: Int?,
+        fiveHourResetAt: Date? = nil,
+        weeklyResetAt: Date? = nil,
+        plan: String? = nil)
+    {
         self.fiveHourRemainingPercent = fiveHourRemainingPercent
         self.weeklyRemainingPercent = weeklyRemainingPercent
+        self.fiveHourResetAt = fiveHourResetAt
+        self.weeklyResetAt = weeklyResetAt
+        self.plan = plan
     }
 }
 
@@ -24,6 +36,12 @@ struct ClaudeUsageResponse: Decodable {
 
     struct Window: Decodable {
         let utilization: Double
+        let resetsAt: String?
+
+        enum CodingKeys: String, CodingKey {
+            case utilization
+            case resetsAt = "resets_at"
+        }
     }
 }
 
@@ -70,11 +88,47 @@ public final class ClaudeUsageClient: @unchecked Sendable {
         let decoded = try JSONDecoder().decode(ClaudeUsageResponse.self, from: data)
         return ClaudeRateLimitSnapshot(
             fiveHourRemainingPercent: Self.remainingPercent(decoded.fiveHour),
-            weeklyRemainingPercent: Self.remainingPercent(decoded.sevenDay))
+            weeklyRemainingPercent: Self.remainingPercent(decoded.sevenDay),
+            fiveHourResetAt: Self.resetDate(decoded.fiveHour),
+            weeklyResetAt: Self.resetDate(decoded.sevenDay),
+            plan: Self.planLabel(credentials.subscriptionType))
     }
 
     static func remainingPercent(_ window: ClaudeUsageResponse.Window?) -> Int? {
         guard let window else { return nil }
         return min(100, max(0, Int((100 - window.utilization).rounded())))
+    }
+
+    static func resetDate(_ window: ClaudeUsageResponse.Window?) -> Date? {
+        guard let raw = window?.resetsAt else { return nil }
+        return parseISO8601(raw)
+    }
+
+    static func parseISO8601(_ value: String) -> Date? {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = formatter.date(from: value) { return date }
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: value)
+    }
+
+    static func planLabel(_ raw: String?) -> String? {
+        guard let raw = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
+            return nil
+        }
+        switch raw.lowercased() {
+        case "free":
+            return "FREE"
+        case "pro":
+            return "PRO"
+        case "team":
+            return "TEAM"
+        case "enterprise":
+            return "ENTERPRISE"
+        case "max":
+            return "MAX"
+        default:
+            return raw.replacingOccurrences(of: "_", with: " ").uppercased()
+        }
     }
 }

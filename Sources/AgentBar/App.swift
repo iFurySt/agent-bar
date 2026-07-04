@@ -1666,85 +1666,15 @@ final class AccountBlocksView: NSView {
     }
 
     private func chipSize(for text: String) -> NSSize {
-        let size = (text as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 8, weight: .bold)])
-        return NSSize(width: ceil(size.width) + 12, height: 15)
+        AgentBarQuotaMetrics.chipSize(for: text)
     }
 
     private func drawChip(_ text: String, size: NSSize, in rect: NSRect) {
-        let path = NSBezierPath(roundedRect: rect, xRadius: rect.height / 2, yRadius: rect.height / 2)
-        NSColor.systemBlue.withAlphaComponent(0.24).setFill()
-        path.fill()
-        NSColor.systemBlue.withAlphaComponent(0.38).setStroke()
-        path.lineWidth = 0.8
-        path.stroke()
-
-        let attributed = NSAttributedString(
-            string: text,
-            attributes: [
-                .font: NSFont.systemFont(ofSize: 8, weight: .bold),
-                .foregroundColor: NSColor.white.withAlphaComponent(0.82),
-            ])
-        let textSize = attributed.size()
-        attributed.draw(at: NSPoint(
-            x: rect.midX - textSize.width / 2,
-            y: rect.midY - textSize.height / 2))
+        AgentBarQuotaMetrics.drawChip(text, in: rect)
     }
 
     private func drawMetric(title: String, percent: Int?, resetAt: Date?, in rect: NSRect) {
-        let percentText = percent.map { "\(min(100, max(0, $0)))%" } ?? "--%"
-        let resetText = resetAt.map { "resets \(Self.countdown(to: $0))" } ?? "reset --"
-        let label = NSAttributedString(
-            string: "\(title) \(percentText)",
-            attributes: [
-                .font: NSFont.monospacedSystemFont(ofSize: 10, weight: .semibold),
-                .foregroundColor: NSColor.white.withAlphaComponent(0.78),
-            ])
-        let reset = NSAttributedString(
-            string: resetText,
-            attributes: [
-                .font: NSFont.systemFont(ofSize: 9, weight: .medium),
-                .foregroundColor: NSColor.white.withAlphaComponent(0.42),
-            ])
-
-        label.draw(in: NSRect(x: rect.minX, y: rect.minY + 1, width: 50, height: rect.height))
-        reset.draw(in: NSRect(x: rect.maxX - 86, y: rect.minY + 2, width: 86, height: rect.height))
-
-        let trackRect = NSRect(x: rect.minX + 54, y: rect.minY + 4, width: max(0, rect.width - 146), height: 6)
-        let track = NSBezierPath(roundedRect: trackRect, xRadius: 3, yRadius: 3)
-        NSColor.white.withAlphaComponent(0.10).setFill()
-        track.fill()
-
-        guard let percent else { return }
-        let ratio = CGFloat(min(100, max(0, percent))) / 100
-        guard ratio > 0 else { return }
-        let fillRect = NSRect(x: trackRect.minX, y: trackRect.minY, width: max(5, trackRect.width * ratio), height: trackRect.height)
-        let fill = NSBezierPath(roundedRect: fillRect, xRadius: 3, yRadius: 3)
-        Self.percentColor(percent).withAlphaComponent(0.88).setFill()
-        fill.fill()
-    }
-
-    private static func percentColor(_ percent: Int) -> NSColor {
-        if percent >= 60 {
-            return .systemGreen
-        }
-        if percent >= 20 {
-            return .systemOrange
-        }
-        return .systemRed
-    }
-
-    private static func countdown(to date: Date, now: Date = Date()) -> String {
-        let seconds = max(0, Int(date.timeIntervalSince(now)))
-        let days = seconds / 86_400
-        let hours = (seconds % 86_400) / 3_600
-        let minutes = (seconds % 3_600) / 60
-        if days > 0 {
-            return "\(days)d \(hours)h"
-        }
-        if hours > 0 {
-            return "\(hours)h \(minutes)m"
-        }
-        return "\(minutes)m"
+        AgentBarQuotaMetrics.drawMetricRow(title: title, percent: percent, resetAt: resetAt, in: rect)
     }
 
     private func truncated(_ value: String, maxLength: Int) -> String {
@@ -1818,50 +1748,29 @@ final class ClaudeQuotaView: NSView {
                 .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
                 .foregroundColor: NSColor.white.withAlphaComponent(0.88),
             ])
-        title.draw(at: NSPoint(x: bounds.minX + 30, y: bounds.maxY - 23))
+        let titleOrigin = NSPoint(x: bounds.minX + 30, y: bounds.maxY - 23)
+        title.draw(at: titleOrigin)
 
-        drawMetric(
+        if let plan = rateLimits.plan {
+            let chipSize = AgentBarQuotaMetrics.chipSize(for: plan)
+            let chipRect = NSRect(
+                x: titleOrigin.x + ceil(title.size().width) + 7,
+                y: bounds.maxY - 24,
+                width: chipSize.width,
+                height: chipSize.height)
+            AgentBarQuotaMetrics.drawChip(plan, in: chipRect)
+        }
+
+        AgentBarQuotaMetrics.drawMetricRow(
             title: "5h",
             percent: rateLimits.fiveHourRemainingPercent,
+            resetAt: rateLimits.fiveHourResetAt,
             in: NSRect(x: bounds.minX + 12, y: bounds.minY + 28, width: bounds.width - 24, height: 14))
-        drawMetric(
+        AgentBarQuotaMetrics.drawMetricRow(
             title: "7d",
             percent: rateLimits.weeklyRemainingPercent,
+            resetAt: rateLimits.weeklyResetAt,
             in: NSRect(x: bounds.minX + 12, y: bounds.minY + 10, width: bounds.width - 24, height: 14))
-    }
-
-    private func drawMetric(title: String, percent: Int?, in rect: NSRect) {
-        let percentText = percent.map { "\(min(100, max(0, $0)))%" } ?? "--%"
-        let label = NSAttributedString(
-            string: "\(title) \(percentText)",
-            attributes: [
-                .font: NSFont.monospacedSystemFont(ofSize: 10, weight: .semibold),
-                .foregroundColor: NSColor.white.withAlphaComponent(0.78),
-            ])
-        label.draw(in: NSRect(x: rect.minX, y: rect.minY + 1, width: 50, height: rect.height))
-
-        let trackRect = NSRect(x: rect.minX + 54, y: rect.minY + 4, width: max(0, rect.width - 54), height: 6)
-        let track = NSBezierPath(roundedRect: trackRect, xRadius: 3, yRadius: 3)
-        NSColor.white.withAlphaComponent(0.10).setFill()
-        track.fill()
-
-        guard let percent else { return }
-        let ratio = CGFloat(min(100, max(0, percent))) / 100
-        guard ratio > 0 else { return }
-        let fillRect = NSRect(x: trackRect.minX, y: trackRect.minY, width: max(5, trackRect.width * ratio), height: trackRect.height)
-        let fill = NSBezierPath(roundedRect: fillRect, xRadius: 3, yRadius: 3)
-        Self.percentColor(percent).withAlphaComponent(0.88).setFill()
-        fill.fill()
-    }
-
-    private static func percentColor(_ percent: Int) -> NSColor {
-        if percent >= 60 {
-            return .systemGreen
-        }
-        if percent >= 20 {
-            return .systemOrange
-        }
-        return .systemRed
     }
 
     private static func claudeIcon() -> NSImage? {
@@ -1885,6 +1794,92 @@ enum AgentBarResources {
         }
 
         return Bundle.module.url(forResource: name, withExtension: fileExtension)
+    }
+}
+
+/// Shared rendering for the 5h/weekly quota rows and plan chips used by both
+/// `AccountBlocksView` (Codex, multi-account) and `ClaudeQuotaView` (Claude Code, single account).
+enum AgentBarQuotaMetrics {
+    static func chipSize(for text: String) -> NSSize {
+        let size = (text as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 8, weight: .bold)])
+        return NSSize(width: ceil(size.width) + 12, height: 15)
+    }
+
+    static func drawChip(_ text: String, in rect: NSRect) {
+        let path = NSBezierPath(roundedRect: rect, xRadius: rect.height / 2, yRadius: rect.height / 2)
+        NSColor.systemBlue.withAlphaComponent(0.24).setFill()
+        path.fill()
+        NSColor.systemBlue.withAlphaComponent(0.38).setStroke()
+        path.lineWidth = 0.8
+        path.stroke()
+
+        let attributed = NSAttributedString(
+            string: text,
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 8, weight: .bold),
+                .foregroundColor: NSColor.white.withAlphaComponent(0.82),
+            ])
+        let textSize = attributed.size()
+        attributed.draw(at: NSPoint(
+            x: rect.midX - textSize.width / 2,
+            y: rect.midY - textSize.height / 2))
+    }
+
+    static func drawMetricRow(title: String, percent: Int?, resetAt: Date?, in rect: NSRect) {
+        let percentText = percent.map { "\(min(100, max(0, $0)))%" } ?? "--%"
+        let resetText = resetAt.map { "resets \(countdown(to: $0))" } ?? "reset --"
+        let label = NSAttributedString(
+            string: "\(title) \(percentText)",
+            attributes: [
+                .font: NSFont.monospacedSystemFont(ofSize: 10, weight: .semibold),
+                .foregroundColor: NSColor.white.withAlphaComponent(0.78),
+            ])
+        let reset = NSAttributedString(
+            string: resetText,
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 9, weight: .medium),
+                .foregroundColor: NSColor.white.withAlphaComponent(0.42),
+            ])
+
+        label.draw(in: NSRect(x: rect.minX, y: rect.minY + 1, width: 50, height: rect.height))
+        reset.draw(in: NSRect(x: rect.maxX - 86, y: rect.minY + 2, width: 86, height: rect.height))
+
+        let trackRect = NSRect(x: rect.minX + 54, y: rect.minY + 4, width: max(0, rect.width - 146), height: 6)
+        let track = NSBezierPath(roundedRect: trackRect, xRadius: 3, yRadius: 3)
+        NSColor.white.withAlphaComponent(0.10).setFill()
+        track.fill()
+
+        guard let percent else { return }
+        let ratio = CGFloat(min(100, max(0, percent))) / 100
+        guard ratio > 0 else { return }
+        let fillRect = NSRect(x: trackRect.minX, y: trackRect.minY, width: max(5, trackRect.width * ratio), height: trackRect.height)
+        let fill = NSBezierPath(roundedRect: fillRect, xRadius: 3, yRadius: 3)
+        percentColor(percent).withAlphaComponent(0.88).setFill()
+        fill.fill()
+    }
+
+    static func percentColor(_ percent: Int) -> NSColor {
+        if percent >= 60 {
+            return .systemGreen
+        }
+        if percent >= 20 {
+            return .systemOrange
+        }
+        return .systemRed
+    }
+
+    static func countdown(to date: Date, now: Date = Date()) -> String {
+        let seconds = max(0, Int(date.timeIntervalSince(now)))
+        let days = seconds / 86_400
+        let hours = (seconds % 86_400) / 3_600
+        let minutes = (seconds % 3_600) / 60
+        if days > 0 {
+            return "\(days)d \(hours)h"
+        }
+        if hours > 0 {
+            return "\(hours)h \(minutes)m"
+        }
+        return "\(minutes)m"
     }
 }
 
