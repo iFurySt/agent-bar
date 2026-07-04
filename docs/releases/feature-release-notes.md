@@ -1,5 +1,11 @@
 # 功能发布记录
 
+## 2026-07
+
+| 日期 | 功能域 | 用户价值 | 变更摘要 |
+| --- | --- | --- | --- |
+| 2026-07-04 | Claude Code 配额 | 同时使用 Codex 和 Claude Code 的用户，展开顶部浮窗就能看到 Claude Code 的 5h/weekly 剩余配额，不用切到终端查看；未安装或未登录 Claude Code 时不会看到多余的空状态。 | 新增 Claude Code OAuth 配额读取（本机 `~/.claude/.credentials.json` 或 macOS Keychain，必要时自动刷新 token），展开面板新增单账号、只读的 Claude Code 5h/weekly 配额卡片；收起状态的顶部一行继续只服务 Codex。 |
+
 ## 2026-04
 
 | 日期 | 功能域 | 用户价值 | 变更摘要 |

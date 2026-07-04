@@ -5,33 +5,39 @@ public struct AgentBarSnapshot: Equatable, Sendable {
     public let costs: CodexCostSnapshot
     public let accounts: [CodexAccountUsageSnapshot]
     public let isUsingRateLimitFallback: Bool
+    public let claudeRateLimits: ClaudeRateLimitSnapshot?
 
     public init(
         rateLimits: CodexRateLimitSnapshot,
         costs: CodexCostSnapshot,
         accounts: [CodexAccountUsageSnapshot] = [],
-        isUsingRateLimitFallback: Bool = false)
+        isUsingRateLimitFallback: Bool = false,
+        claudeRateLimits: ClaudeRateLimitSnapshot? = nil)
     {
         self.rateLimits = rateLimits
         self.costs = costs
         self.accounts = accounts
         self.isUsingRateLimitFallback = isUsingRateLimitFallback
+        self.claudeRateLimits = claudeRateLimits
     }
 }
 
 public final class CodexSnapshotService: @unchecked Sendable {
     private let usageClient: CodexUsageClient
+    private let claudeUsageClient: ClaudeUsageClient
     private let costScanner: CodexCostScanner
     private let fallbackScanner: CodexRateLimitFallbackScanner
     private let cacheStore: AgentBarCacheStore
 
     public init(
         usageClient: CodexUsageClient = CodexUsageClient(),
+        claudeUsageClient: ClaudeUsageClient = ClaudeUsageClient(),
         costScanner: CodexCostScanner? = nil,
         fallbackScanner: CodexRateLimitFallbackScanner? = nil,
         cacheStore: AgentBarCacheStore = .default)
     {
         self.usageClient = usageClient
+        self.claudeUsageClient = claudeUsageClient
         self.costScanner = costScanner ?? CodexCostScanner(cacheStore: cacheStore)
         self.fallbackScanner = fallbackScanner ?? CodexRateLimitFallbackScanner(cacheStore: cacheStore)
         self.cacheStore = cacheStore
@@ -71,6 +77,10 @@ public final class CodexSnapshotService: @unchecked Sendable {
             last30DaysTokens: last30.totalTokens)
     }
 
+    public func cachedClaudeRateLimits() -> ClaudeRateLimitSnapshot? {
+        cacheStore.load().latestSnapshot?.claudeRateLimits
+    }
+
     public func cachedAccounts() -> [CodexAccountUsageSnapshot] {
         let currentID = try? CodexAuthStore.load().stableAccountID
         let snapshotAccounts = cacheStore.load().latestSnapshot?.accounts ?? []
@@ -108,13 +118,17 @@ public final class CodexSnapshotService: @unchecked Sendable {
         let accountTask = Task {
             await self.usageClient.fetchAccountRateLimits()
         }
+        let claudeTask = Task {
+            await self.claudeRateLimits()
+        }
 
         let resolvedRateLimits = await resolveRateLimits()
         let snapshot = await AgentBarSnapshot(
             rateLimits: resolvedRateLimits.snapshot,
             costs: costTask.value,
             accounts: accountTask.value,
-            isUsingRateLimitFallback: resolvedRateLimits.isUsingFallback)
+            isUsingRateLimitFallback: resolvedRateLimits.isUsingFallback,
+            claudeRateLimits: claudeTask.value)
         cacheStore.save(snapshot: snapshot)
         return snapshot
     }
@@ -129,6 +143,13 @@ public final class CodexSnapshotService: @unchecked Sendable {
         } catch {
             return await resolveRateLimits().snapshot
         }
+    }
+
+    /// Returns nil when Claude Code isn't logged in on this machine, so callers
+    /// can hide the section entirely instead of showing an error state.
+    public func claudeRateLimits() async -> ClaudeRateLimitSnapshot? {
+        guard ClaudeUsageClient.hasCredentials() else { return nil }
+        return try? await claudeUsageClient.fetchRateLimits()
     }
 
     private func resolveRateLimits() async -> (snapshot: CodexRateLimitSnapshot, isUsingFallback: Bool) {

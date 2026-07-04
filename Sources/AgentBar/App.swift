@@ -98,6 +98,7 @@ final class IslandWindowController {
         last30DaysCostUSD: 0,
         last30DaysTokens: 0)
     private var currentAccounts: [CodexAccountUsageSnapshot] = []
+    private var currentClaudeRateLimits: ClaudeRateLimitSnapshot?
     private var currentText = "5h --%  7d --%  Today: $0.00 \u{00B7} --/~30 Days: $0.00 \u{00B7} -- Tokens"
 
     init(updater: AgentBarUpdater) {
@@ -106,6 +107,7 @@ final class IslandWindowController {
         if let cachedSnapshot = snapshotService.cachedSnapshot() {
             currentCosts = cachedSnapshot.costs
             currentAccounts = cachedSnapshot.accounts
+            currentClaudeRateLimits = cachedSnapshot.claudeRateLimits
             currentText = AgentBarDisplayFormatting.line(snapshot: cachedSnapshot)
         } else if let cachedCosts = snapshotService.cachedCosts() {
             currentCosts = cachedCosts
@@ -115,6 +117,9 @@ final class IslandWindowController {
         }
         if currentAccounts.isEmpty {
             currentAccounts = snapshotService.cachedAccounts()
+        }
+        if currentClaudeRateLimits == nil {
+            currentClaudeRateLimits = snapshotService.cachedClaudeRateLimits()
         }
 
         NotificationCenter.default.addObserver(
@@ -164,6 +169,11 @@ final class IslandWindowController {
         let snapshot = await snapshotService.snapshot()
         currentCosts = snapshot.costs
         currentAccounts = accountsApplyingActiveOverride(snapshot.accounts)
+        if let claudeRateLimits = snapshot.claudeRateLimits {
+            currentClaudeRateLimits = claudeRateLimits
+        } else if !ClaudeUsageClient.hasCredentials() {
+            currentClaudeRateLimits = nil
+        }
         let visibleRateLimits = currentAccounts.first(where: \.isCurrent)?.rateLimits ?? snapshot.rateLimits
         currentText = AgentBarDisplayFormatting.line(snapshot: AgentBarSnapshot(
             rateLimits: visibleRateLimits,
@@ -198,6 +208,7 @@ final class IslandWindowController {
             }
             overlay.view.update(text: currentText, animated: false)
             overlay.view.update(accounts: currentAccounts)
+            overlay.view.update(claudeRateLimits: currentClaudeRateLimits)
             overlay.view.setPinned(preferences.isPinned)
             overlay.view.setExpanded(overlay.isExpanded)
             resetExpansionAutoCollapse(for: overlay, at: mouseLocation)
@@ -216,6 +227,7 @@ final class IslandWindowController {
         for overlay in overlays {
             let textChanged = overlay.view.update(text: currentText, animated: animated)
             overlay.view.update(accounts: currentAccounts)
+            overlay.view.update(claudeRateLimits: currentClaudeRateLimits)
             overlay.view.setPinned(preferences.isPinned)
             overlay.view.setExpanded(overlay.isExpanded)
             position(
@@ -579,6 +591,7 @@ final class IslandView: NSView {
     private let quotaLabel = RollingTextLabel()
     private let usageLabel = RollingTextLabel()
     private let accountsView = AccountBlocksView()
+    private let claudeQuotaView = ClaudeQuotaView()
     private let pinButton = PinButton()
     private let settingsButton = SettingsButton()
     private var horizontalPadding: CGFloat = 0
@@ -620,6 +633,7 @@ final class IslandView: NSView {
         addSubview(quotaLabel)
         addSubview(usageLabel)
         addSubview(accountsView)
+        addSubview(claudeQuotaView)
         addSubview(pinButton)
         addSubview(settingsButton)
         accountsView.onAccountSelected = { [weak self] accountID in
@@ -702,6 +716,13 @@ final class IslandView: NSView {
         needsDisplay = true
     }
 
+    func update(claudeRateLimits: ClaudeRateLimitSnapshot?) {
+        claudeQuotaView.rateLimits = claudeRateLimits
+        updateClaudeQuotaVisibility()
+        needsLayout = true
+        needsDisplay = true
+    }
+
     func setPinned(_ isPinned: Bool) {
         pinButton.setPinned(isPinned)
     }
@@ -720,8 +741,13 @@ final class IslandView: NSView {
             controlsVisible = true
         }
         updateControlVisibility()
+        updateClaudeQuotaVisibility()
         needsDisplay = true
         needsLayout = true
+    }
+
+    private func updateClaudeQuotaVisibility() {
+        claudeQuotaView.isHidden = !isExpanded || claudeQuotaView.rateLimits == nil
     }
 
     func configure(_ style: Style) {
@@ -744,6 +770,7 @@ final class IslandView: NSView {
             quotaLabel.isHidden = true
             usageLabel.isHidden = true
             accountsView.isHidden = !isExpanded
+            updateClaudeQuotaVisibility()
         case let .notch(height, gapWidth, showsPin, showsSettings):
             horizontalPadding = 16
             notchInnerPadding = 2
@@ -761,6 +788,7 @@ final class IslandView: NSView {
             quotaLabel.isHidden = false
             usageLabel.isHidden = false
             accountsView.isHidden = !isExpanded
+            updateClaudeQuotaVisibility()
         }
         needsDisplay = true
         needsLayout = true
@@ -888,16 +916,29 @@ final class IslandView: NSView {
     private func layoutAccountsLabel() {
         guard isExpanded else {
             accountsView.frame = .zero
+            claudeQuotaView.frame = .zero
             return
         }
 
         let x = max(8, horizontalPadding - 2)
+        let width = max(0, bounds.width - x * 2)
         let topY = bounds.maxY - notchHeight - 8
-        let height = max(0, topY - bounds.minY - 6)
+        let claudeRowHeight = claudeQuotaView.isHidden ? 0 : ClaudeQuotaView.height + Self.claudeRowGap
+        if !claudeQuotaView.isHidden {
+            claudeQuotaView.frame = NSRect(
+                x: x,
+                y: topY - ClaudeQuotaView.height,
+                width: width,
+                height: ClaudeQuotaView.height)
+        } else {
+            claudeQuotaView.frame = .zero
+        }
+
+        let height = max(0, topY - claudeRowHeight - bounds.minY - 6)
         accountsView.frame = NSRect(
             x: x,
             y: bounds.minY + 8,
-            width: max(0, bounds.width - x * 2),
+            width: width,
             height: height)
     }
 
@@ -1116,7 +1157,7 @@ final class IslandView: NSView {
     }
 
     private static func codexIcon() -> NSImage? {
-        guard let url = resourceURL(for: "ProviderIcon-codex", withExtension: "svg"),
+        guard let url = AgentBarResources.url(for: "ProviderIcon-codex", withExtension: "svg"),
               let image = NSImage(contentsOf: url)
         else {
             return nil
@@ -1124,17 +1165,6 @@ final class IslandView: NSView {
         image.isTemplate = true
         image.size = iconViewSize
         return image
-    }
-
-    private static func resourceURL(for name: String, withExtension fileExtension: String) -> URL? {
-        if let resourceURL = Bundle.main.resourceURL,
-           let packagedBundle = Bundle(url: resourceURL.appendingPathComponent("agent-bar_AgentBar.bundle")),
-           let url = packagedBundle.url(forResource: name, withExtension: fileExtension)
-        {
-            return url
-        }
-
-        return Bundle.module.url(forResource: name, withExtension: fileExtension)
     }
 
     private var iconViewSize: NSSize {
@@ -1164,7 +1194,8 @@ final class IslandView: NSView {
     }
 
     private var expandedPullHeight: CGFloat {
-        16 + accountsView.expandedContentHeight
+        let claudeRowHeight = claudeQuotaView.isHidden ? 0 : ClaudeQuotaView.height + Self.claudeRowGap
+        return 16 + claudeRowHeight + accountsView.expandedContentHeight
     }
 
     private var topContentCenterY: CGFloat {
@@ -1175,6 +1206,7 @@ final class IslandView: NSView {
     private static let pinButtonSize = NSSize(width: 18, height: 18)
     private static let pinButtonGap: CGFloat = 6
     private static let settingsButtonGap: CGFloat = 5
+    private static let claudeRowGap: CGFloat = 8
     private static let labelFont = NSFont.monospacedSystemFont(ofSize: 11, weight: .semibold)
 }
 
@@ -1741,6 +1773,118 @@ final class AccountBlocksView: NSView {
         let titleRect: NSRect
         let chipRect: NSRect?
         let switchRect: NSRect
+    }
+}
+
+/// Single-account, expand-only summary of Claude Code's 5h/weekly quota.
+/// Hidden entirely (not an error state) when Claude Code isn't logged in on this machine.
+final class ClaudeQuotaView: NSView {
+    static let height: CGFloat = 72
+
+    var rateLimits: ClaudeRateLimitSnapshot? {
+        didSet {
+            guard rateLimits != oldValue else { return }
+            needsDisplay = true
+        }
+    }
+
+    override var isOpaque: Bool {
+        false
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard let rateLimits else { return }
+
+        let block = NSBezierPath(roundedRect: bounds, xRadius: 14, yRadius: 14)
+        NSColor.white.withAlphaComponent(0.075).setFill()
+        block.fill()
+        NSColor.white.withAlphaComponent(0.10).setStroke()
+        block.lineWidth = 1
+        block.stroke()
+
+        if let icon = Self.claudeIcon() {
+            let iconSize = NSSize(width: 13, height: 13)
+            icon.draw(
+                in: NSRect(x: bounds.minX + 12, y: bounds.maxY - 22, width: iconSize.width, height: iconSize.height),
+                from: .zero,
+                operation: .sourceOver,
+                fraction: 0.82)
+        }
+
+        let title = NSAttributedString(
+            string: "Claude Code",
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
+                .foregroundColor: NSColor.white.withAlphaComponent(0.88),
+            ])
+        title.draw(at: NSPoint(x: bounds.minX + 30, y: bounds.maxY - 23))
+
+        drawMetric(
+            title: "5h",
+            percent: rateLimits.fiveHourRemainingPercent,
+            in: NSRect(x: bounds.minX + 12, y: bounds.minY + 28, width: bounds.width - 24, height: 14))
+        drawMetric(
+            title: "7d",
+            percent: rateLimits.weeklyRemainingPercent,
+            in: NSRect(x: bounds.minX + 12, y: bounds.minY + 10, width: bounds.width - 24, height: 14))
+    }
+
+    private func drawMetric(title: String, percent: Int?, in rect: NSRect) {
+        let percentText = percent.map { "\(min(100, max(0, $0)))%" } ?? "--%"
+        let label = NSAttributedString(
+            string: "\(title) \(percentText)",
+            attributes: [
+                .font: NSFont.monospacedSystemFont(ofSize: 10, weight: .semibold),
+                .foregroundColor: NSColor.white.withAlphaComponent(0.78),
+            ])
+        label.draw(in: NSRect(x: rect.minX, y: rect.minY + 1, width: 50, height: rect.height))
+
+        let trackRect = NSRect(x: rect.minX + 54, y: rect.minY + 4, width: max(0, rect.width - 54), height: 6)
+        let track = NSBezierPath(roundedRect: trackRect, xRadius: 3, yRadius: 3)
+        NSColor.white.withAlphaComponent(0.10).setFill()
+        track.fill()
+
+        guard let percent else { return }
+        let ratio = CGFloat(min(100, max(0, percent))) / 100
+        guard ratio > 0 else { return }
+        let fillRect = NSRect(x: trackRect.minX, y: trackRect.minY, width: max(5, trackRect.width * ratio), height: trackRect.height)
+        let fill = NSBezierPath(roundedRect: fillRect, xRadius: 3, yRadius: 3)
+        Self.percentColor(percent).withAlphaComponent(0.88).setFill()
+        fill.fill()
+    }
+
+    private static func percentColor(_ percent: Int) -> NSColor {
+        if percent >= 60 {
+            return .systemGreen
+        }
+        if percent >= 20 {
+            return .systemOrange
+        }
+        return .systemRed
+    }
+
+    private static func claudeIcon() -> NSImage? {
+        guard let url = AgentBarResources.url(for: "ProviderIcon-claude", withExtension: "svg"),
+              let image = NSImage(contentsOf: url)
+        else {
+            return nil
+        }
+        image.isTemplate = true
+        return image
+    }
+}
+
+enum AgentBarResources {
+    static func url(for name: String, withExtension fileExtension: String) -> URL? {
+        if let resourceURL = Bundle.main.resourceURL,
+           let packagedBundle = Bundle(url: resourceURL.appendingPathComponent("agent-bar_AgentBar.bundle")),
+           let url = packagedBundle.url(forResource: name, withExtension: fileExtension)
+        {
+            return url
+        }
+
+        return Bundle.module.url(forResource: name, withExtension: fileExtension)
     }
 }
 

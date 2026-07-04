@@ -80,16 +80,18 @@ struct CachedAgentBarSnapshot: Codable, Equatable, Sendable {
     let costs: CodexCostSnapshot
     let accounts: [CodexAccountUsageSnapshot]
     let updatedAt: Date
+    var claudeRateLimits: ClaudeRateLimitSnapshot?
 
     init(snapshot: AgentBarSnapshot, updatedAt: Date) {
         self.rateLimits = snapshot.rateLimits
         self.costs = snapshot.costs
         self.accounts = snapshot.accounts
         self.updatedAt = updatedAt
+        self.claudeRateLimits = snapshot.claudeRateLimits
     }
 
     var snapshot: AgentBarSnapshot {
-        AgentBarSnapshot(rateLimits: rateLimits, costs: costs, accounts: accounts)
+        AgentBarSnapshot(rateLimits: rateLimits, costs: costs, accounts: accounts, claudeRateLimits: claudeRateLimits)
     }
 }
 
