@@ -2,8 +2,14 @@ import Foundation
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
+#if canImport(Darwin)
+import Darwin
+#endif
 #if canImport(Security)
 import Security
+#endif
+#if canImport(LocalAuthentication)
+import LocalAuthentication
 #endif
 
 struct ClaudeAuthCredentials: Equatable, Sendable {
@@ -32,6 +38,7 @@ public enum ClaudeHome {
 
 enum ClaudeAuthStore {
     private static let keychainService = "Claude Code-credentials"
+    private static let keychainUIFailPolicy = resolveKeychainUIFailPolicy()
 
     static func credentialsFileURL() -> URL {
         ClaudeHome.url().appendingPathComponent(".credentials.json")
@@ -94,12 +101,13 @@ enum ClaudeAuthStore {
 
     private static func readKeychain() -> Data? {
         #if canImport(Security)
-        let query: [String: Any] = [
+        var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
             kSecMatchLimit as String: kSecMatchLimitOne,
             kSecReturnData as String: true,
         ]
+        query.merge(nonInteractiveKeychainOptions()) { _, new in new }
         var result: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         guard status == errSecSuccess, let data = result as? Data else { return nil }
@@ -111,16 +119,50 @@ enum ClaudeAuthStore {
 
     private static func writeKeychain(_ data: Data) {
         #if canImport(Security)
-        let query: [String: Any] = [
+        var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
         ]
+        query.merge(nonInteractiveKeychainOptions()) { _, new in new }
         let status = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
         guard status == errSecItemNotFound else { return }
 
         var newItem = query
         newItem[kSecValueData as String] = data
         SecItemAdd(newItem as CFDictionary, nil)
+        #endif
+    }
+
+    private static func nonInteractiveKeychainOptions() -> [String: Any] {
+        #if canImport(Security) && canImport(LocalAuthentication) && canImport(Darwin)
+        let context = LAContext()
+        context.interactionNotAllowed = true
+        return [
+            // AgentBar refreshes in the background; Claude quota should never
+            // summon a Keychain authorization sheet just to decide visibility.
+            kSecUseAuthenticationContext as String: context,
+            kSecUseAuthenticationUI as String: keychainUIFailPolicy as CFString,
+        ]
+        #else
+        return [:]
+        #endif
+    }
+
+    private static func resolveKeychainUIFailPolicy() -> String {
+        #if canImport(Darwin)
+        let securityPath = "/System/Library/Frameworks/Security.framework/Security"
+        guard let handle = dlopen(securityPath, RTLD_NOW) else {
+            return "u_AuthUIF"
+        }
+        defer { dlclose(handle) }
+
+        guard let symbol = dlsym(handle, "kSecUseAuthenticationUIFail") else {
+            return "u_AuthUIF"
+        }
+        let valuePointer = symbol.assumingMemoryBound(to: CFString?.self)
+        return (valuePointer.pointee as String?) ?? "u_AuthUIF"
+        #else
+        return "u_AuthUIF"
         #endif
     }
 }

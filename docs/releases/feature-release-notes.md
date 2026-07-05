@@ -4,6 +4,7 @@
 
 | 日期 | 功能域 | 用户价值 | 变更摘要 |
 | --- | --- | --- | --- |
+| 2026-07-05 | Claude Code 配额 | Claude Code 重新登录后，AgentBar 不会再为了读取 Keychain 凭据反复弹系统授权窗口；读不到可无提示访问的凭据时直接隐藏 Claude 卡片。 | macOS Keychain 读取和写回改为 non-interactive，保留 `~/.claude/.credentials.json` 优先路径；Keychain 需要用户授权时不再打断后台刷新。 |
 | 2026-07-04 | Claude Code 配额 | Claude Code 配额卡片现在和 Codex 账号卡片一样能看到剩余额度什么时候重置，以及当前订阅等级（PRO/MAX/TEAM 等），信息密度和 Codex 保持一致。 | `ClaudeRateLimitSnapshot` 新增 `resets_at` 换算的 reset 倒计时和基于 `subscriptionType` 的 plan 徽章；`ClaudeQuotaView` 展示 plan 徽章和 `resets Xh Ym` 文本，渲染逻辑与 Codex 账号卡片共用同一套 `AgentBarQuotaMetrics` 绘制辅助函数。 |
 | 2026-07-04 | Claude Code 配额 | 同时使用 Codex 和 Claude Code 的用户，展开顶部浮窗就能看到 Claude Code 的 5h/weekly 剩余配额，不用切到终端查看；未安装或未登录 Claude Code 时不会看到多余的空状态。 | 新增 Claude Code OAuth 配额读取（本机 `~/.claude/.credentials.json` 或 macOS Keychain，必要时自动刷新 token），展开面板新增单账号、只读的 Claude Code 5h/weekly 配额卡片；收起状态的顶部一行继续只服务 Codex。 |
 
