@@ -26,7 +26,10 @@ Code 的 5h/weekly 配额（只读、单账号）。
 10. `ClaudeUsageClient` 读取 `~/.claude/.credentials.json`，找不到文件时再以 non-interactive 方式尝试读取
     macOS Keychain 里的 `Claude Code-credentials`（`ClaudeAuthStore`，用 `#if canImport(Security)` 包住以保持
     `AgentBarCore` 在 Linux CI 上可编译）；如果 Keychain 需要弹出授权窗口，AgentBar 会把它视为不可用并隐藏
-    Claude Code 卡片，不打断用户。`accessToken` 临近过期或请求失败时用 `ClaudeTokenRefresher` 调用
+    Claude Code 卡片，不打断用户。`ClaudeAuthStore` 在内存里缓存已解析的凭据最多 30 分钟，文件来源的凭据靠
+    mtime/size 指纹判断是否需要重新读盘，Keychain 来源的凭据在缓存有效期内完全不重新触碰 Keychain；60 秒一次
+    的后台轮询因此不会每次都重新读文件或重新访问 Keychain，只有指纹变化、缓存过期或 token 刷新后写回时才会
+    真正触碰底层存储。`accessToken` 临近过期或请求失败时用 `ClaudeTokenRefresher` 调用
     `platform.claude.com/v1/oauth/token` 刷新并写回原凭据来源。拿到 token 后调用 Anthropic
     `GET /api/oauth/usage`，把 `five_hour`/`seven_day` 两个窗口的 `utilization` 换算成 remaining percent、
     `resets_at` 换算成 reset 倒计时，再把凭据里的 `subscriptionType`（`pro`/`max`/`team`/... ）映射成大写

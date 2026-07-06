@@ -40,6 +40,22 @@ enum ClaudeAuthStore {
     private static let keychainService = "Claude Code-credentials"
     private static let keychainUIFailPolicy = resolveKeychainUIFailPolicy()
 
+    // AgentBar polls Claude Code's quota on a timer; without this cache every
+    // tick would re-read the credentials file (or worse, re-hit the Keychain)
+    // even though nothing changed. A cheap file-mtime/size check lets a fresh
+    // `claude` login invalidate the cache immediately, while Keychain-sourced
+    // credentials (no file to stat) simply ride out the validity window.
+    private static let memoryCacheValidityDuration: TimeInterval = 30 * 60
+    private static let cacheLock = NSLock()
+    private nonisolated(unsafe) static var cachedCredentials: ClaudeAuthCredentials?
+    private nonisolated(unsafe) static var cachedAt: Date?
+    private nonisolated(unsafe) static var cachedFileFingerprint: FileFingerprint?
+
+    struct FileFingerprint: Equatable {
+        let modifiedAt: Date?
+        let size: Int
+    }
+
     static func credentialsFileURL() -> URL {
         ClaudeHome.url().appendingPathComponent(".credentials.json")
     }
@@ -49,13 +65,21 @@ enum ClaudeAuthStore {
     }
 
     static func load() throws -> ClaudeAuthCredentials {
+        if let cached = readValidCache() {
+            return cached
+        }
+
         if let data = try? Data(contentsOf: credentialsFileURL()) {
-            return try parse(data: data, source: .file)
+            let credentials = try parse(data: data, source: .file)
+            writeCache(credentials, fileFingerprint: currentFileFingerprint())
+            return credentials
         }
         guard let data = readKeychain() else {
             throw AgentBarError("No Claude Code credentials found")
         }
-        return try parse(data: data, source: .keychain)
+        let credentials = try parse(data: data, source: .keychain)
+        writeCache(credentials, fileFingerprint: nil)
+        return credentials
     }
 
     static func save(_ credentials: ClaudeAuthCredentials) {
@@ -63,9 +87,40 @@ enum ClaudeAuthStore {
         switch credentials.source {
         case .file:
             try? payload.write(to: credentialsFileURL(), options: .atomic)
+            writeCache(credentials, fileFingerprint: currentFileFingerprint())
         case .keychain:
             writeKeychain(payload)
+            writeCache(credentials, fileFingerprint: nil)
         }
+    }
+
+    private static func readValidCache() -> ClaudeAuthCredentials? {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        guard let cachedCredentials, let cachedAt,
+              Date().timeIntervalSince(cachedAt) < memoryCacheValidityDuration
+        else { return nil }
+
+        if cachedCredentials.source == .file, currentFileFingerprint() != cachedFileFingerprint {
+            return nil
+        }
+        return cachedCredentials
+    }
+
+    private static func writeCache(_ credentials: ClaudeAuthCredentials, fileFingerprint: FileFingerprint?) {
+        cacheLock.lock()
+        cachedCredentials = credentials
+        cachedAt = Date()
+        cachedFileFingerprint = fileFingerprint
+        cacheLock.unlock()
+    }
+
+    private static func currentFileFingerprint() -> FileFingerprint? {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: credentialsFileURL().path)
+        else { return nil }
+        return FileFingerprint(
+            modifiedAt: attributes[.modificationDate] as? Date,
+            size: (attributes[.size] as? NSNumber)?.intValue ?? 0)
     }
 
     static func parse(data: Data, source: ClaudeCredentialSource) throws -> ClaudeAuthCredentials {
