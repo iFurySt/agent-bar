@@ -2,32 +2,17 @@ import Foundation
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
-#if canImport(Darwin)
-import Darwin
-#endif
-#if canImport(Security)
-import Security
-#endif
-#if canImport(LocalAuthentication)
-import LocalAuthentication
-#endif
 
 struct ClaudeAuthCredentials: Equatable, Sendable {
     let accessToken: String
     let refreshToken: String
     let expiresAt: Date?
     let subscriptionType: String?
-    let source: ClaudeCredentialSource
 
     var needsRefresh: Bool {
         guard let expiresAt else { return false }
         return Date().addingTimeInterval(5 * 60) >= expiresAt
     }
-}
-
-enum ClaudeCredentialSource: Sendable {
-    case file
-    case keychain
 }
 
 public enum ClaudeHome {
@@ -37,14 +22,16 @@ public enum ClaudeHome {
 }
 
 enum ClaudeAuthStore {
-    private static let keychainService = "Claude Code-credentials"
-    private static let keychainUIFailPolicy = resolveKeychainUIFailPolicy()
-
     // AgentBar polls Claude Code's quota on a timer; without this cache every
-    // tick would re-read the credentials file (or worse, re-hit the Keychain)
-    // even though nothing changed. A cheap file-mtime/size check lets a fresh
-    // `claude` login invalidate the cache immediately, while Keychain-sourced
-    // credentials (no file to stat) simply ride out the validity window.
+    // tick would re-read the credentials file even though nothing changed. A
+    // cheap file-mtime/size check lets a fresh `claude` login invalidate the
+    // cache immediately.
+    //
+    // Only `~/.claude/.credentials.json` is read. Claude Code can also store
+    // credentials in the macOS Keychain, but non-interactive Keychain reads
+    // aren't reliably prompt-free across systems, and AgentBar's Claude quota
+    // card has no user-initiated action to gate an interactive fallback
+    // behind — so background polling never touches the Keychain at all.
     private static let memoryCacheValidityDuration: TimeInterval = 30 * 60
     private static let cacheLock = NSLock()
     private nonisolated(unsafe) static var cachedCredentials: ClaudeAuthCredentials?
@@ -69,41 +56,27 @@ enum ClaudeAuthStore {
             return cached
         }
 
-        if let data = try? Data(contentsOf: credentialsFileURL()) {
-            let credentials = try parse(data: data, source: .file)
-            writeCache(credentials, fileFingerprint: currentFileFingerprint())
-            return credentials
-        }
-        guard let data = readKeychain() else {
+        guard let data = try? Data(contentsOf: credentialsFileURL()) else {
             throw AgentBarError("No Claude Code credentials found")
         }
-        let credentials = try parse(data: data, source: .keychain)
-        writeCache(credentials, fileFingerprint: nil)
+        let credentials = try parse(data: data)
+        writeCache(credentials, fileFingerprint: currentFileFingerprint())
         return credentials
     }
 
     static func save(_ credentials: ClaudeAuthCredentials) {
         let payload = encode(credentials)
-        switch credentials.source {
-        case .file:
-            try? payload.write(to: credentialsFileURL(), options: .atomic)
-            writeCache(credentials, fileFingerprint: currentFileFingerprint())
-        case .keychain:
-            writeKeychain(payload)
-            writeCache(credentials, fileFingerprint: nil)
-        }
+        try? payload.write(to: credentialsFileURL(), options: .atomic)
+        writeCache(credentials, fileFingerprint: currentFileFingerprint())
     }
 
     private static func readValidCache() -> ClaudeAuthCredentials? {
         cacheLock.lock()
         defer { cacheLock.unlock() }
         guard let cachedCredentials, let cachedAt,
-              Date().timeIntervalSince(cachedAt) < memoryCacheValidityDuration
+              Date().timeIntervalSince(cachedAt) < memoryCacheValidityDuration,
+              currentFileFingerprint() == cachedFileFingerprint
         else { return nil }
-
-        if cachedCredentials.source == .file, currentFileFingerprint() != cachedFileFingerprint {
-            return nil
-        }
         return cachedCredentials
     }
 
@@ -123,7 +96,7 @@ enum ClaudeAuthStore {
             size: (attributes[.size] as? NSNumber)?.intValue ?? 0)
     }
 
-    static func parse(data: Data, source: ClaudeCredentialSource) throws -> ClaudeAuthCredentials {
+    static func parse(data: Data) throws -> ClaudeAuthCredentials {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let oauth = json["claudeAiOauth"] as? [String: Any],
               let accessToken = oauth["accessToken"] as? String, !accessToken.isEmpty
@@ -135,8 +108,7 @@ enum ClaudeAuthStore {
             accessToken: accessToken,
             refreshToken: oauth["refreshToken"] as? String ?? "",
             expiresAt: (oauth["expiresAt"] as? NSNumber).map { Date(timeIntervalSince1970: $0.doubleValue / 1000) },
-            subscriptionType: oauth["subscriptionType"] as? String,
-            source: source)
+            subscriptionType: oauth["subscriptionType"] as? String)
     }
 
     private static func encode(_ credentials: ClaudeAuthCredentials) -> Data {
@@ -152,73 +124,6 @@ enum ClaudeAuthStore {
         }
         let json: [String: Any] = ["claudeAiOauth": oauth]
         return (try? JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys])) ?? Data()
-    }
-
-    private static func readKeychain() -> Data? {
-        #if canImport(Security)
-        var query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: keychainService,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-            kSecReturnData as String: true,
-        ]
-        query.merge(nonInteractiveKeychainOptions()) { _, new in new }
-        var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        guard status == errSecSuccess, let data = result as? Data else { return nil }
-        return data
-        #else
-        return nil
-        #endif
-    }
-
-    private static func writeKeychain(_ data: Data) {
-        #if canImport(Security)
-        var query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: keychainService,
-        ]
-        query.merge(nonInteractiveKeychainOptions()) { _, new in new }
-        let status = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
-        guard status == errSecItemNotFound else { return }
-
-        var newItem = query
-        newItem[kSecValueData as String] = data
-        SecItemAdd(newItem as CFDictionary, nil)
-        #endif
-    }
-
-    private static func nonInteractiveKeychainOptions() -> [String: Any] {
-        #if canImport(Security) && canImport(LocalAuthentication) && canImport(Darwin)
-        let context = LAContext()
-        context.interactionNotAllowed = true
-        return [
-            // AgentBar refreshes in the background; Claude quota should never
-            // summon a Keychain authorization sheet just to decide visibility.
-            kSecUseAuthenticationContext as String: context,
-            kSecUseAuthenticationUI as String: keychainUIFailPolicy as CFString,
-        ]
-        #else
-        return [:]
-        #endif
-    }
-
-    private static func resolveKeychainUIFailPolicy() -> String {
-        #if canImport(Darwin)
-        let securityPath = "/System/Library/Frameworks/Security.framework/Security"
-        guard let handle = dlopen(securityPath, RTLD_NOW) else {
-            return "u_AuthUIF"
-        }
-        defer { dlclose(handle) }
-
-        guard let symbol = dlsym(handle, "kSecUseAuthenticationUIFail") else {
-            return "u_AuthUIF"
-        }
-        let valuePointer = symbol.assumingMemoryBound(to: CFString?.self)
-        return (valuePointer.pointee as String?) ?? "u_AuthUIF"
-        #else
-        return "u_AuthUIF"
-        #endif
     }
 }
 
@@ -256,7 +161,6 @@ enum ClaudeTokenRefresher {
             accessToken: accessToken,
             refreshToken: json["refresh_token"] as? String ?? credentials.refreshToken,
             expiresAt: expiresAt,
-            subscriptionType: credentials.subscriptionType,
-            source: credentials.source)
+            subscriptionType: credentials.subscriptionType)
     }
 }

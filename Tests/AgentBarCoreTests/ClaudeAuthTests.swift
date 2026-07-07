@@ -15,7 +15,7 @@ final class ClaudeAuthTests: XCTestCase {
           }
         }
         """
-        let credentials = try ClaudeAuthStore.parse(data: Data(json.utf8), source: .file)
+        let credentials = try ClaudeAuthStore.parse(data: Data(json.utf8))
 
         XCTAssertEqual(credentials.accessToken, "access-123")
         XCTAssertEqual(credentials.refreshToken, "refresh-456")
@@ -26,12 +26,12 @@ final class ClaudeAuthTests: XCTestCase {
 
     func testThrowsOnMissingAccessToken() {
         let json = #"{"claudeAiOauth":{"refreshToken":"refresh-456"}}"#
-        XCTAssertThrowsError(try ClaudeAuthStore.parse(data: Data(json.utf8), source: .file))
+        XCTAssertThrowsError(try ClaudeAuthStore.parse(data: Data(json.utf8)))
     }
 
     func testThrowsOnMissingOauthPayload() {
         let json = #"{"somethingElse": true}"#
-        XCTAssertThrowsError(try ClaudeAuthStore.parse(data: Data(json.utf8), source: .file))
+        XCTAssertThrowsError(try ClaudeAuthStore.parse(data: Data(json.utf8)))
     }
 
     func testNeedsRefreshWhenExpiringSoon() {
@@ -39,24 +39,21 @@ final class ClaudeAuthTests: XCTestCase {
             accessToken: "a",
             refreshToken: "r",
             expiresAt: Date().addingTimeInterval(60),
-            subscriptionType: "pro",
-            source: .file)
+            subscriptionType: "pro")
         XCTAssertTrue(expiringSoon.needsRefresh)
 
         let freshForAWhile = ClaudeAuthCredentials(
             accessToken: "a",
             refreshToken: "r",
             expiresAt: Date().addingTimeInterval(3600),
-            subscriptionType: "pro",
-            source: .file)
+            subscriptionType: "pro")
         XCTAssertFalse(freshForAWhile.needsRefresh)
 
         let noExpiry = ClaudeAuthCredentials(
             accessToken: "a",
             refreshToken: "r",
             expiresAt: nil,
-            subscriptionType: nil,
-            source: .file)
+            subscriptionType: nil)
         XCTAssertFalse(noExpiry.needsRefresh)
     }
 }
