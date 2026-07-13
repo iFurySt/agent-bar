@@ -1250,14 +1250,14 @@ final class SettingsAccountsListView: NSView {
 
         let metricWidth = max(0, rect.width - 40)
         drawMetric(
-            title: "5h",
-            percent: account.rateLimits.fiveHourRemainingPercent,
-            resetAt: account.rateLimits.fiveHourResetAt,
+            title: account.rateLimits.primaryLabel,
+            percent: account.rateLimits.primary?.remainingPercent,
+            resetAt: account.rateLimits.primary?.resetAt,
             in: NSRect(x: rect.minX + 20, y: rect.minY + 32, width: metricWidth, height: 12))
         drawMetric(
-            title: "7d",
-            percent: account.rateLimits.weeklyRemainingPercent,
-            resetAt: account.rateLimits.weeklyResetAt,
+            title: account.rateLimits.secondaryLabel,
+            percent: account.rateLimits.secondary?.remainingPercent,
+            resetAt: account.rateLimits.secondary?.resetAt,
             in: NSRect(x: rect.minX + 20, y: rect.minY + 49, width: metricWidth, height: 12))
     }
 

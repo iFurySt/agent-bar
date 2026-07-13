@@ -99,7 +99,7 @@ final class IslandWindowController {
         last30DaysTokens: 0)
     private var currentAccounts: [CodexAccountUsageSnapshot] = []
     private var currentClaudeRateLimits: ClaudeRateLimitSnapshot?
-    private var currentText = "5h --%  7d --%  Today: $0.00 \u{00B7} --/~30 Days: $0.00 \u{00B7} -- Tokens"
+    private var currentText = "Today: $0.00 \u{00B7} --/~30 Days: $0.00 \u{00B7} -- Tokens"
 
     init(updater: AgentBarUpdater) {
         self.updater = updater
@@ -590,6 +590,7 @@ final class IslandView: NSView {
     private let fullLabel = RollingTextLabel()
     private let quotaLabel = RollingTextLabel()
     private let usageLabel = RollingTextLabel()
+    private var visibleQuotaCount = 0
     private let accountsView = AccountBlocksView()
     private let claudeQuotaView = ClaudeQuotaView()
     private let pinButton = PinButton()
@@ -696,16 +697,18 @@ final class IslandView: NSView {
 
     @discardableResult
     func update(text: String, animated: Bool) -> Bool {
-        let segments = Self.split(text)
+        let quotaPercents = Self.quotaPercents(in: text)
         let fullText = Self.styledFullText(text)
-        let quotaText = Self.styledPercentText(segments.sessionPercent)
-        let usageText = Self.styledPercentText(segments.weeklyPercent)
+        let quotaText = Self.styledPercentText(quotaPercents.first ?? "")
+        let usageText = Self.styledPercentText(quotaPercents.dropFirst().first ?? "")
+        visibleQuotaCount = quotaPercents.count
         let textChanged = fullLabel.stringValue != fullText.string ||
             quotaLabel.stringValue != quotaText.string ||
             usageLabel.stringValue != usageText.string
         fullLabel.setAttributedStringValue(fullText, animated: animated)
         quotaLabel.setAttributedStringValue(quotaText, animated: animated)
         usageLabel.setAttributedStringValue(usageText, animated: animated)
+        updateQuotaVisibility()
         needsLayout = true
         return textChanged
     }
@@ -750,6 +753,12 @@ final class IslandView: NSView {
         claudeQuotaView.isHidden = !isExpanded || claudeQuotaView.rateLimits == nil
     }
 
+    private func updateQuotaVisibility() {
+        guard case .notch = style else { return }
+        quotaLabel.isHidden = visibleQuotaCount < 1
+        usageLabel.isHidden = visibleQuotaCount < 2
+    }
+
     func configure(_ style: Style) {
         self.style = style
         switch style {
@@ -785,8 +794,7 @@ final class IslandView: NSView {
             quotaLabel.lineBreakMode = .byClipping
             usageLabel.lineBreakMode = .byClipping
             fullLabel.isHidden = true
-            quotaLabel.isHidden = false
-            usageLabel.isHidden = false
+            updateQuotaVisibility()
             accountsView.isHidden = !isExpanded
             updateClaudeQuotaVisibility()
         }
@@ -807,9 +815,11 @@ final class IslandView: NSView {
             let iconWidth = iconViewSize.width
             let iconGap: CGFloat = 8
             let labelSafety: CGFloat = 10
-            let leftContentWidth = iconWidth + iconGap + ceil(quotaLabel.intrinsicContentSize.width)
+            let quotaWidth = quotaLabel.isHidden ? 0 : ceil(quotaLabel.intrinsicContentSize.width)
+            let leftContentWidth = iconWidth + (quotaLabel.isHidden ? 0 : iconGap) + quotaWidth
             let rightLabelSafety = activeActionSlotWidth > 0 ? labelSafety : 0
-            let rightContentWidth = ceil(usageLabel.intrinsicContentSize.width) + rightLabelSafety + activeActionSlotWidth
+            let usageWidth = usageLabel.isHidden ? 0 : ceil(usageLabel.intrinsicContentSize.width)
+            let rightContentWidth = usageWidth + rightLabelSafety + activeActionSlotWidth
             let leftWidth = ceil(horizontalPadding + leftContentWidth + notchInnerPadding)
             let rightWidth = ceil(notchInnerPadding + rightContentWidth + horizontalPadding)
             notchLeftLaneWidth = leftWidth
@@ -859,26 +869,35 @@ final class IslandView: NSView {
         let iconWidth = iconViewSize.width
         let iconGap: CGFloat = 8
         let labelSafety: CGFloat = 10
-        let quotaWidth = ceil(quotaLabel.intrinsicContentSize.width)
-        let leftContentWidth = iconWidth + iconGap + quotaWidth
+        let quotaWidth = quotaLabel.isHidden ? 0 : ceil(quotaLabel.intrinsicContentSize.width)
+        let resolvedIconGap = quotaLabel.isHidden ? 0 : iconGap
+        let leftContentWidth = iconWidth + resolvedIconGap + quotaWidth
         let leftContentX = max(horizontalPadding, gapStart - notchInnerPadding - leftContentWidth)
 
         iconView.frame = NSRect(x: leftContentX, y: iconY, width: iconWidth, height: iconViewSize.height)
-        let quotaX = iconView.frame.maxX + iconGap
-        quotaLabel.frame = NSRect(
-            x: quotaX,
-            y: labelY,
-            width: quotaWidth + labelSafety,
-            height: textHeight)
+        if quotaLabel.isHidden {
+            quotaLabel.frame = .zero
+        } else {
+            let quotaX = iconView.frame.maxX + resolvedIconGap
+            quotaLabel.frame = NSRect(
+                x: quotaX,
+                y: labelY,
+                width: quotaWidth + labelSafety,
+                height: textHeight)
+        }
 
-        let usageWidth = ceil(usageLabel.intrinsicContentSize.width)
-        let usageX = gapEnd + notchInnerPadding
-        let usageFrameWidth = usageWidth + (activeActionSlotWidth > 0 ? labelSafety : 0)
-        usageLabel.frame = NSRect(
-            x: usageX,
-            y: labelY,
-            width: usageFrameWidth,
-            height: textHeight)
+        if usageLabel.isHidden {
+            usageLabel.frame = .zero
+        } else {
+            let usageWidth = ceil(usageLabel.intrinsicContentSize.width)
+            let usageX = gapEnd + notchInnerPadding
+            let usageFrameWidth = usageWidth + (activeActionSlotWidth > 0 ? labelSafety : 0)
+            usageLabel.frame = NSRect(
+                x: usageX,
+                y: labelY,
+                width: usageFrameWidth,
+                height: textHeight)
+        }
 
         guard (controlsVisible || isExpanded) && (showsPin || showsSettings) else {
             return
@@ -886,11 +905,14 @@ final class IslandView: NSView {
 
         let size = Self.pinButtonSize
         let buttonY = floor(centerY - size.height / 2)
+        let actionStartX = usageLabel.isHidden
+            ? gapEnd + notchInnerPadding
+            : usageLabel.frame.maxX
 
         switch (showsPin, showsSettings) {
         case (true, true):
             pinButton.frame = NSRect(
-                x: usageLabel.frame.maxX + Self.pinButtonGap,
+                x: actionStartX + Self.pinButtonGap,
                 y: buttonY,
                 width: size.width,
                 height: size.height)
@@ -902,7 +924,7 @@ final class IslandView: NSView {
         case (false, true):
             pinButton.frame = .zero
             settingsButton.frame = NSRect(
-                x: usageLabel.frame.maxX + Self.pinButtonGap,
+                x: actionStartX + Self.pinButtonGap,
                 y: buttonY,
                 width: size.width,
                 height: size.height)
@@ -1020,20 +1042,10 @@ final class IslandView: NSView {
         onExpansionToggle?()
     }
 
-    private static func split(_ text: String) -> (sessionPercent: String, weeklyPercent: String) {
+    private static func quotaPercents(in text: String) -> [String] {
         let parts = text.split(separator: " ", omittingEmptySubsequences: true).map(String.init)
-        let session = quotaSegment(prefix: "5h", parts: parts)
-        let weekly = quotaSegment(prefix: "7d", parts: parts)
-        return (session, weekly)
-    }
-
-    private static func quotaSegment(prefix: String, parts: [String]) -> String {
-        guard let index = parts.firstIndex(of: prefix),
-              parts.indices.contains(index + 1)
-        else {
-            return "\(prefix) --%"
-        }
-        return parts[index + 1]
+        let quotaEnd = parts.firstIndex(of: "Today:") ?? parts.endIndex
+        return parts[..<quotaEnd].filter { $0.range(of: #"^\d+%$"#, options: .regularExpression) != nil }
     }
 
     private static func styledFullText(_ text: String) -> NSAttributedString {
@@ -1045,7 +1057,7 @@ final class IslandView: NSView {
             ])
         let nsText = text as NSString
 
-        apply(pattern: #"(5h|7d|Today:|~30 Days:|Tokens)"#, in: text) { range, _ in
+        apply(pattern: #"(5h|7d|Daily|Monthly|Annual|Usage|Secondary|Today:|~30 Days:|Tokens)"#, in: text) { range, _ in
             attributed.addAttribute(.foregroundColor, value: NSColor.white.withAlphaComponent(0.58), range: range)
         }
         apply(pattern: #"(·|/)"#, in: text) { range, _ in
@@ -1057,7 +1069,7 @@ final class IslandView: NSView {
         apply(pattern: #"\b[0-9.]+[KMB]\b"#, in: text) { range, _ in
             attributed.addAttribute(.foregroundColor, value: NSColor.systemCyan.withAlphaComponent(0.92), range: range)
         }
-        apply(pattern: #"\b(5h|7d)\s+(--%|\d+%)"#, in: text) { _, match in
+        apply(pattern: #"\b(5h|7d|Daily|Monthly|Annual|Usage|Secondary)\s+(--%|\d+%)"#, in: text) { _, match in
             guard match.numberOfRanges >= 3 else { return }
             let percentRange = match.range(at: 2)
             let percent = nsText.substring(with: percentRange)
@@ -1531,14 +1543,14 @@ final class AccountBlocksView: NSView {
             isSwitchHovered: hoveredSwitchAccountID == account.id,
             in: rect)
         drawMetric(
-            title: "5h",
-            percent: account.rateLimits.fiveHourRemainingPercent,
-            resetAt: account.rateLimits.fiveHourResetAt,
+            title: account.rateLimits.primaryLabel,
+            percent: account.rateLimits.primary?.remainingPercent,
+            resetAt: account.rateLimits.primary?.resetAt,
             in: NSRect(x: rect.minX + 12, y: rect.minY + 28, width: rect.width - 24, height: 14))
         drawMetric(
-            title: "7d",
-            percent: account.rateLimits.weeklyRemainingPercent,
-            resetAt: account.rateLimits.weeklyResetAt,
+            title: account.rateLimits.secondaryLabel,
+            percent: account.rateLimits.secondary?.remainingPercent,
+            resetAt: account.rateLimits.secondary?.resetAt,
             in: NSRect(x: rect.minX + 12, y: rect.minY + 10, width: rect.width - 24, height: 14))
     }
 

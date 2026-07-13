@@ -4,6 +4,7 @@
 
 | 日期 | 功能域 | 用户价值 | 变更摘要 |
 | --- | --- | --- | --- |
+| 2026-07-13 | Codex 配额 | Codex 账号被切换到 Daily、Monthly 等新额度周期时，顶部浮窗和账号列表会显示真实周期；只有一个可用窗口时只显示该窗口，不再留下 `--%` 空位。 | Codex quota 改为携带 duration/reset 的 primary/secondary window；usage API 与 session fallback 都读取窗口时长，旧 cache 保持兼容，monthly-only 响应不会混入旧 session 的 weekly 数据；顶部窗口按周期从短到长排列。 |
 | 2026-07-07 | Claude Code 配额 | AgentBar 彻底不再访问 macOS Keychain，启动或后台轮询都不会再弹出 Keychain 授权窗口；代价是如果 Claude Code 凭据只存在 Keychain 里（没有 `~/.claude/.credentials.json` 文件），配额卡片会不可用。 | 删除 `ClaudeAuthStore` 里的 Keychain 读写代码，只保留 `~/.claude/.credentials.json` 文件路径；文件不存在时直接隐藏卡片。 |
 | 2026-07-06 | Claude Code 配额 | AgentBar 不再每次后台轮询都重新读取 Claude Code 的凭据文件或 Keychain，减少对敏感凭据的重复访问。 | `ClaudeAuthStore` 新增 30 分钟内存缓存：文件来源凭据靠 mtime/size 指纹判断是否需要重读，Keychain 来源凭据在缓存有效期内不重新访问 Keychain；token 刷新写回时同步更新缓存。 |
 | 2026-07-05 | Claude Code 配额 | Claude Code 重新登录后，AgentBar 不会再为了读取 Keychain 凭据反复弹系统授权窗口；读不到可无提示访问的凭据时直接隐藏 Claude 卡片。 | macOS Keychain 读取和写回改为 non-interactive，保留 `~/.claude/.credentials.json` 优先路径；Keychain 需要用户授权时不再打断后台刷新。 |

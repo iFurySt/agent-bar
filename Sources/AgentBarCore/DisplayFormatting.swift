@@ -2,10 +2,12 @@ import Foundation
 
 public enum AgentBarDisplayFormatting {
     public static func line(snapshot: AgentBarSnapshot) -> String {
-        let fiveHour = percent(snapshot.rateLimits.fiveHourRemainingPercent)
-        let weekly = percent(snapshot.rateLimits.weeklyRemainingPercent)
         let dot = "\u{00B7}"
-        return "5h \(fiveHour)  7d \(weekly)  Today: \(usd(snapshot.costs.todayCostUSD)) \(dot) \(tokens(snapshot.costs.todayTokens))/~30 Days: \(usd(snapshot.costs.last30DaysCostUSD)) \(dot) \(tokens(snapshot.costs.last30DaysTokens)) Tokens"
+        let quota = snapshot.rateLimits.availableWindows.map { window in
+            "\(window.displayLabel(fallback: "Usage")) \(percent(window.remainingPercent))"
+        }.joined(separator: "  ")
+        let usage = "Today: \(usd(snapshot.costs.todayCostUSD)) \(dot) \(tokens(snapshot.costs.todayTokens))/~30 Days: \(usd(snapshot.costs.last30DaysCostUSD)) \(dot) \(tokens(snapshot.costs.last30DaysTokens)) Tokens"
+        return quota.isEmpty ? usage : "\(quota)  \(usage)"
     }
 
     public static func percent(_ value: Int?) -> String {

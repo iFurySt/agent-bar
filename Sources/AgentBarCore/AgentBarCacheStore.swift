@@ -119,6 +119,10 @@ struct CachedRateLimitCandidate: Codable, Equatable, Sendable {
     let isBaseCodexLimit: Bool
     let primary: Int?
     let secondary: Int?
+    var primaryDurationMinutes: Int? = nil
+    var secondaryDurationMinutes: Int? = nil
+    var primaryResetAt: Date? = nil
+    var secondaryResetAt: Date? = nil
 }
 
 struct CachedCostFile: Codable, Equatable, Sendable {

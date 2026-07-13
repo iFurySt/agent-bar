@@ -164,7 +164,7 @@ public final class CodexSnapshotService: @unchecked Sendable {
             let rateLimits = fetchedRateLimits.fillingMissing(with: fallbackRateLimits)
             return (
                 rateLimits,
-                fetchedRateLimits.hasMissingPercent && fallbackRateLimits != fetchedRateLimits)
+                !fetchedRateLimits.hasAnyPercent && fallbackRateLimits != fetchedRateLimits)
         } catch {
             let fallbackRateLimits = await fallbackTask.value
             return (fallbackRateLimits, true)
@@ -219,8 +219,8 @@ public final class CodexRateLimitFallbackScanner: @unchecked Sendable {
                 let candidate = RateLimitCandidate(
                     timestamp: timestamp,
                     isBaseCodexLimit: Self.isBaseCodexLimit(rateLimits["limit_id"]),
-                    primary: Self.remainingPercent(rateLimits["primary"]),
-                    secondary: Self.remainingPercent(rateLimits["secondary"]))
+                    primary: Self.window(rateLimits["primary"]),
+                    secondary: Self.window(rateLimits["secondary"]))
                 guard candidate.primary != nil || candidate.secondary != nil else { return true }
 
                 if Self.shouldReplace(best: fileBest, with: candidate) {
@@ -241,8 +241,8 @@ public final class CodexRateLimitFallbackScanner: @unchecked Sendable {
         }
 
         let snapshot = CodexRateLimitSnapshot(
-            fiveHourRemainingPercent: best?.primary,
-            weeklyRemainingPercent: best?.secondary)
+            primary: best?.primary,
+            secondary: best?.secondary)
 
         cacheStore?.update { cache in
             cache.rateLimitFiles = cache.rateLimitFiles.filter { currentPaths.contains($0.key) }
@@ -275,11 +275,18 @@ public final class CodexRateLimitFallbackScanner: @unchecked Sendable {
         return files.sorted { $0.1 > $1.1 }.prefix(80).map(\.0)
     }
 
-    private static func remainingPercent(_ raw: Any?) -> Int? {
+    private static func window(_ raw: Any?) -> CodexRateLimitWindow? {
         guard let dictionary = raw as? [String: Any],
               let used = dictionary["used_percent"] as? NSNumber
         else { return nil }
-        return min(100, max(0, Int((100 - used.doubleValue).rounded())))
+        let resetAt = (dictionary["resets_at"] as? NSNumber).map {
+            Date(timeIntervalSince1970: $0.doubleValue)
+        }
+        let duration = (dictionary["window_minutes"] as? NSNumber)?.intValue
+        return CodexRateLimitWindow(
+            remainingPercent: min(100, max(0, Int((100 - used.doubleValue).rounded()))),
+            resetAt: resetAt,
+            durationMinutes: duration)
     }
 
     private static func isBaseCodexLimit(_ raw: Any?) -> Bool {
@@ -299,8 +306,8 @@ public final class CodexRateLimitFallbackScanner: @unchecked Sendable {
 private struct RateLimitCandidate {
     let timestamp: String
     let isBaseCodexLimit: Bool
-    let primary: Int?
-    let secondary: Int?
+    let primary: CodexRateLimitWindow?
+    let secondary: CodexRateLimitWindow?
 }
 
 private extension CachedRateLimitCandidate {
@@ -308,16 +315,30 @@ private extension CachedRateLimitCandidate {
         self.init(
             timestamp: candidate.timestamp,
             isBaseCodexLimit: candidate.isBaseCodexLimit,
-            primary: candidate.primary,
-            secondary: candidate.secondary)
+            primary: candidate.primary?.remainingPercent,
+            secondary: candidate.secondary?.remainingPercent,
+            primaryDurationMinutes: candidate.primary?.durationMinutes,
+            secondaryDurationMinutes: candidate.secondary?.durationMinutes,
+            primaryResetAt: candidate.primary?.resetAt,
+            secondaryResetAt: candidate.secondary?.resetAt)
     }
 
     var rateLimitCandidate: RateLimitCandidate {
         RateLimitCandidate(
             timestamp: timestamp,
             isBaseCodexLimit: isBaseCodexLimit,
-            primary: primary,
-            secondary: secondary)
+            primary: primary.map {
+                CodexRateLimitWindow(
+                    remainingPercent: $0,
+                    resetAt: primaryResetAt,
+                    durationMinutes: primaryDurationMinutes)
+            },
+            secondary: secondary.map {
+                CodexRateLimitWindow(
+                    remainingPercent: $0,
+                    resetAt: secondaryResetAt,
+                    durationMinutes: secondaryDurationMinutes)
+            })
     }
 }
 

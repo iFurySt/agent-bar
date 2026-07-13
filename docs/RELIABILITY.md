@@ -26,4 +26,4 @@ swift run AgentBar
 AGENT_BAR_RELEASE_ARCH=native AGENT_BAR_RELEASE_VERSION=0.0.0-test ./scripts/release-package.sh
 ```
 
-如果 5h/7d 显示 `--%`，优先检查 `codex` 是否已登录、最近 session 里是否存在 `token_count.rate_limits`，以及 `~/.agentbar/cache.json` 是否可写。
+如果 Codex quota 显示 `--%`，优先检查 `codex` 是否已登录、最近 session 里是否存在带 primary/secondary window 的 `token_count.rate_limits`，以及 `~/.agentbar/cache.json` 是否可写。
